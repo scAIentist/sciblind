@@ -95,6 +95,12 @@ function VotingPageContent() {
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'complete'>('loading');
+  const [isHydrated, setIsHydrated] = useState(false);
+
+  // Mark as hydrated on mount
+  useEffect(() => {
+    setIsHydrated(true);
+  }, []);
 
   // Refs
   const startTimeRef = useRef<number>(Date.now());
@@ -131,8 +137,11 @@ function VotingPageContent() {
     return '/placeholder.png';
   }, [isMobile]);
 
-  // Fetch study on mount
+  // Fetch study on mount - wait for hydration to check token
   useEffect(() => {
+    // Don't do anything until hydrated (token might be null during SSR)
+    if (!isHydrated) return;
+
     if (!token) {
       router.replace(`/study/${studyId}`);
       return;
@@ -164,7 +173,7 @@ function VotingPageContent() {
     return () => {
       controller.abort();
     };
-  }, [studyId, token]);
+  }, [studyId, token, isHydrated]);
 
   // Keyboard shortcuts
   useEffect(() => {
