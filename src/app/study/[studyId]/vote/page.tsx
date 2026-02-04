@@ -270,7 +270,10 @@ function VotingPageContent() {
         throw new Error(data.error);
       }
 
-      // Always fetch fresh pair after voting (removed prefetch to avoid duplicates)
+      // Clear current pair immediately to show loading state
+      setPair(null);
+
+      // Fetch fresh pair after voting
       await fetchNextPair(currentCategoryId || undefined);
 
     } catch (err: any) {
@@ -449,8 +452,8 @@ function VotingPageContent() {
 
       {/* Main voting area */}
       <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
-        {pair && leftItem && rightItem && (
-          <div className="w-full max-w-4xl grid grid-cols-2 gap-2 sm:gap-4 items-center">
+        {pair && leftItem && rightItem ? (
+          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4 items-start">
             {/* Left image */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
@@ -463,7 +466,8 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="w-full h-auto max-h-[70vh] object-contain"
+                className="w-full h-auto object-contain"
+                style={{ maxHeight: 'calc(100vh - 180px)' }}
               />
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 A
@@ -482,12 +486,17 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="w-full h-auto max-h-[70vh] object-contain"
+                className="w-full h-auto object-contain"
+                style={{ maxHeight: 'calc(100vh - 180px)' }}
               />
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 L
               </div>
             </button>
+          </div>
+        ) : (
+          <div className="text-center">
+            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
           </div>
         )}
       </main>
