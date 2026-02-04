@@ -73,8 +73,8 @@ const translations = {
   },
 };
 
-// Supabase storage base URL with image transformation
-const SUPABASE_RENDER_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/render/image/public/izvrs-images';
+// Supabase storage URLs
+const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
 
 function VotingPageContent() {
   const params = useParams();
@@ -118,18 +118,17 @@ function VotingPageContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Optimized image URL builder with Supabase image transformation
+  // Image URL builder - use direct storage URL (images already optimized during upload)
   const getImageUrl = useCallback((item: ItemData): string => {
-    const width = isMobile ? 500 : 900;
     if (item.imageKey) {
       const parts = item.imageKey.split('/');
       if (parts[0] === 'izvrs' && parts.length === 3) {
-        return `${SUPABASE_RENDER_URL}/${parts[1]}/${parts[2]}?width=${width}&quality=80`;
+        return `${SUPABASE_STORAGE_URL}/${parts[1]}/${parts[2]}`;
       }
     }
     if (item.imageUrl) return item.imageUrl;
     return '/placeholder.png';
-  }, [isMobile]);
+  }, []);
 
   // Fetch study on mount - wait for hydration to check token
   useEffect(() => {
@@ -453,54 +452,52 @@ function VotingPageContent() {
         <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - two LANDSCAPE images side by side, width-constrained */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4">
+      {/* Main voting area - CSS Grid with two equal columns, images use object-fit: contain */}
+      <main className="flex-1 min-h-0 p-2 sm:p-4">
         {pair && leftItem && rightItem ? (
-          <div className="w-full flex flex-row gap-2 sm:gap-4 items-center justify-center">
-            {/* Left image (Option A) - width: ~48%, height: auto */}
+          <div className="w-full h-full grid grid-cols-2 gap-2 sm:gap-4">
+            {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
+              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ width: '48%' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="w-full h-auto rounded-md"
-                style={{ imageOrientation: 'none' }}
+                className="max-w-full max-h-full object-contain rounded-md"
               />
-              <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
+              <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 A
               </div>
             </button>
 
-            {/* Right image (Option B) - width: ~48%, height: auto */}
+            {/* Right image (Option B) */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
+              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ width: '48%' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="w-full h-auto rounded-md"
-                style={{ imageOrientation: 'none' }}
+                className="max-w-full max-h-full object-contain rounded-md"
               />
-              <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
+              <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 B
               </div>
             </button>
           </div>
         ) : (
-          <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
         )}
       </main>
 
