@@ -453,10 +453,10 @@ function VotingPageContent() {
         <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - two LANDSCAPE images side by side, FULLY VISIBLE, NO CROPPING */}
-      <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-4">
+      {/* Main voting area - two images side by side */}
+      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
         {pair && leftItem && rightItem ? (
-          <div className="w-full h-full flex flex-row gap-2 sm:gap-4 items-center justify-center">
+          <div className="flex flex-row gap-2 sm:gap-4 items-center justify-center">
             {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
@@ -464,21 +464,12 @@ function VotingPageContent() {
               className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ maxWidth: 'calc(50% - 8px)' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                style={{
-                  display: 'block',
-                  maxWidth: '100%',
-                  maxHeight: 'calc(100dvh - 130px)',
-                  width: 'auto',
-                  height: 'auto',
-                  imageOrientation: 'from-image',
-                  borderRadius: '6px'
-                }}
+                className="block max-w-[48vw] max-h-[75vh] rounded-md"
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 A
@@ -492,21 +483,12 @@ function VotingPageContent() {
               className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ maxWidth: 'calc(50% - 8px)' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                style={{
-                  display: 'block',
-                  maxWidth: '100%',
-                  maxHeight: 'calc(100dvh - 130px)',
-                  width: 'auto',
-                  height: 'auto',
-                  imageOrientation: 'from-image',
-                  borderRadius: '6px'
-                }}
+                className="block max-w-[48vw] max-h-[75vh] rounded-md"
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 B
