@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 
 interface ItemData {
@@ -78,7 +78,7 @@ const translations = {
 const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
 const SUPABASE_RENDER_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/render/image/public/izvrs-images';
 
-export default function VotingPage() {
+function VotingPageContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -550,5 +550,21 @@ export default function VotingPage() {
         <p className="text-xs text-slate-400">{t.tapToSelect}</p>
       </div>
     </div>
+  );
+}
+
+// Wrap with Suspense for useSearchParams
+export default function VotingPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
+        <div className="text-center">
+          <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="mt-4 text-slate-500 text-sm">Nalaganje...</p>
+        </div>
+      </div>
+    }>
+      <VotingPageContent />
+    </Suspense>
   );
 }
