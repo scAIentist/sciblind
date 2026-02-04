@@ -453,42 +453,46 @@ function VotingPageContent() {
         <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - two images side by side */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
+      {/* Main voting area - two LANDSCAPE images side by side, width-constrained */}
+      <main className="flex-1 flex items-center justify-center p-2 sm:p-4">
         {pair && leftItem && rightItem ? (
-          <div className="flex flex-row gap-2 sm:gap-4 items-center justify-center">
-            {/* Left image (Option A) */}
+          <div className="w-full flex flex-row gap-2 sm:gap-4 items-center justify-center">
+            {/* Left image (Option A) - width: ~48%, height: auto */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
               className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
+              style={{ width: '48%' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="block max-w-[48vw] max-h-[75vh] rounded-md"
+                className="w-full h-auto rounded-md"
+                style={{ imageOrientation: 'none' }}
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 A
               </div>
             </button>
 
-            {/* Right image (Option B) */}
+            {/* Right image (Option B) - width: ~48%, height: auto */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
               className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-1
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
+              style={{ width: '48%' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="block max-w-[48vw] max-h-[75vh] rounded-md"
+                className="w-full h-auto rounded-md"
+                style={{ imageOrientation: 'none' }}
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
                 B
