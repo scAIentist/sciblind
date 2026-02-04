@@ -10,6 +10,11 @@
  * - Strict input validation
  * - Fraud detection (response time analysis)
  * - Full audit trail
+ *
+ * Test mode:
+ * - Test sessions do NOT update ELO ratings
+ * - Test sessions do NOT update item stats
+ * - Comparisons are still recorded for testing purposes
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -146,7 +151,7 @@ export async function POST(
       }
     }
 
-    // Check for duplicate comparison
+    // Check for duplicate comparison (within this session)
     const existingComparison = await prisma.comparison.findFirst({
       where: {
         sessionId: session.id,
@@ -182,16 +187,12 @@ export async function POST(
     const winner = winnerId === itemAId ? itemA : itemB;
     const loser = winnerId === itemAId ? itemB : itemA;
 
-    // Calculate ELO changes
-    const eloResult = calculateEloChange(
-      winner.eloRating,
-      loser.eloRating,
-      session.study.eloKFactor
-    );
+    // Check if this is a test session
+    const isTestSession = session.isTestSession;
 
     // Create comparison and update everything in a transaction
     const result = await prisma.$transaction(async (tx) => {
-      // Create comparison record
+      // Create comparison record (always, even for test sessions - for UI flow)
       const comparison = await tx.comparison.create({
         data: {
           studyId,
@@ -203,38 +204,57 @@ export async function POST(
           leftItemId,
           rightItemId,
           responseTimeMs: responseTimeMs ?? null,
-          isFlagged,
-          flagReason,
+          isFlagged: isTestSession ? true : isFlagged, // Always flag test comparisons
+          flagReason: isTestSession ? 'test_session' : flagReason,
         },
       });
 
-      // Update winner stats
-      await tx.item.update({
-        where: { id: winner.id },
-        data: {
-          eloRating: eloResult.winnerNewRating,
-          eloGames: { increment: 1 },
-          comparisonCount: { increment: 1 },
-          winCount: { increment: 1 },
-          leftCount: leftItemId === winner.id ? { increment: 1 } : undefined,
-          rightCount: rightItemId === winner.id ? { increment: 1 } : undefined,
-        },
-      });
+      // ONLY update ELO and item stats for NON-test sessions
+      if (!isTestSession) {
+        // Calculate ELO changes
+        const eloResult = calculateEloChange(
+          winner.eloRating,
+          loser.eloRating,
+          session.study.eloKFactor
+        );
 
-      // Update loser stats
-      await tx.item.update({
-        where: { id: loser.id },
-        data: {
-          eloRating: eloResult.loserNewRating,
-          eloGames: { increment: 1 },
-          comparisonCount: { increment: 1 },
-          lossCount: { increment: 1 },
-          leftCount: leftItemId === loser.id ? { increment: 1 } : undefined,
-          rightCount: rightItemId === loser.id ? { increment: 1 } : undefined,
-        },
-      });
+        // Update winner stats
+        await tx.item.update({
+          where: { id: winner.id },
+          data: {
+            eloRating: eloResult.winnerNewRating,
+            eloGames: { increment: 1 },
+            comparisonCount: { increment: 1 },
+            winCount: { increment: 1 },
+            leftCount: leftItemId === winner.id ? { increment: 1 } : undefined,
+            rightCount: rightItemId === winner.id ? { increment: 1 } : undefined,
+          },
+        });
 
-      // Update session stats
+        // Update loser stats
+        await tx.item.update({
+          where: { id: loser.id },
+          data: {
+            eloRating: eloResult.loserNewRating,
+            eloGames: { increment: 1 },
+            comparisonCount: { increment: 1 },
+            lossCount: { increment: 1 },
+            leftCount: leftItemId === loser.id ? { increment: 1 } : undefined,
+            rightCount: rightItemId === loser.id ? { increment: 1 } : undefined,
+          },
+        });
+
+        // Record usage metrics (only for real sessions)
+        await tx.usageMetrics.create({
+          data: {
+            studyId,
+            eventType: 'COMPARISON',
+            count: 1,
+          },
+        });
+      }
+
+      // Update session stats (for both test and real sessions - for UI progress)
       const newComparisonCount = session.comparisonCount + 1;
       const validResponseTime = responseTimeMs !== undefined && responseTimeMs > 0;
       const newAvgResponseTime =
@@ -257,15 +277,6 @@ export async function POST(
         },
       });
 
-      // Record usage metrics
-      await tx.usageMetrics.create({
-        data: {
-          studyId,
-          eventType: 'COMPARISON',
-          count: 1,
-        },
-      });
-
       return comparison;
     });
 
@@ -275,6 +286,7 @@ export async function POST(
         comparisonId: result.id,
         flagged: isFlagged,
         sessionComparisonCount: session.comparisonCount + 1,
+        isTestMode: isTestSession, // Let client know this is test mode
       },
       { headers: rateLimitHeaders }
     );

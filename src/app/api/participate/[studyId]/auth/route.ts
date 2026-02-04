@@ -10,6 +10,11 @@
  * - Input validation and sanitization
  * - Timing-safe code comparison
  * - IP fingerprinting
+ *
+ * Test mode:
+ * - Test codes can be used unlimited times
+ * - Test sessions don't affect ELO ratings
+ * - Test sessions are excluded from statistics
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -157,7 +162,34 @@ export async function POST(
       );
     }
 
-    // Check if code was already used (single-use)
+    // TEST CODE: Allow unlimited uses, always create new test session
+    if (accessCode.isTestCode) {
+      const token = generateSessionToken();
+
+      const session = await prisma.session.create({
+        data: {
+          studyId,
+          token,
+          ipHash,
+          userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
+          categoryProgress: {},
+          isTestSession: true, // Mark as test session
+        },
+      });
+
+      return NextResponse.json(
+        {
+          success: true,
+          sessionToken: session.token,
+          sessionId: session.id,
+          codeLabel: accessCode.label,
+          isTestMode: true, // Let client know this is test mode
+        },
+        { headers: rateLimitHeaders }
+      );
+    }
+
+    // REGULAR CODE: Check if already used (single-use)
     if (accessCode.usedAt || accessCode.usedBySessionId) {
       // Return the existing session token if still valid
       if (accessCode.usedBySessionId) {
@@ -184,7 +216,7 @@ export async function POST(
       );
     }
 
-    // Create new session
+    // Create new session for regular code
     const token = generateSessionToken();
 
     const session = await prisma.session.create({
@@ -194,6 +226,7 @@ export async function POST(
         ipHash,
         userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
         categoryProgress: {},
+        isTestSession: false,
       },
     });
 

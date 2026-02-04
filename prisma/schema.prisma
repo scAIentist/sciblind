@@ -89,6 +89,9 @@ model AccessCode {
   codeHash        String    @unique  // SHA256 for secure comparison
   label           String?            // "Ocenjevalec 1" admin reference
 
+  // Test mode: unlimited uses, no ELO updates, excluded from stats
+  isTestCode      Boolean   @default(false)
+
   usedAt          DateTime?
   usedBySessionId String?   @unique
   session         Session?  @relation(fields: [usedBySessionId], references: [id])
@@ -158,6 +161,9 @@ model Session {
   token             String       @unique // For resume functionality
   ipHash            String?      // SHA256 hash for duplicate detection
   userAgent         String?
+
+  // Test mode: votes don't affect ELO, excluded from stats
+  isTestSession     Boolean      @default(false)
 
   // Access code relation
   accessCode        AccessCode?
