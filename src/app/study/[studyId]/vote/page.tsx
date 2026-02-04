@@ -453,18 +453,18 @@ function VotingPageContent() {
         <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - images side by side, each taking max 50% width, auto height */}
-      <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-4">
+      {/* Main voting area - two landscape images side by side */}
+      {/* Width is the constraint (each image gets ~50%), height follows naturally */}
+      <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
         {pair && leftItem && rightItem ? (
-          <div className="flex flex-row gap-2 sm:gap-4 items-center justify-center w-full" style={{ maxHeight: '100%' }}>
-            {/* Left image (Option A) - container shrinks to fit image */}
+          <div className="flex flex-row gap-3 sm:gap-6 items-center justify-center">
+            {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl shadow-md transition-all duration-100
+              className={`relative rounded-lg sm:rounded-xl shadow-md transition-all duration-100
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ maxWidth: 'calc(50% - 8px)' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -472,10 +472,10 @@ function VotingPageContent() {
                 alt="Option A"
                 className="block rounded-lg sm:rounded-xl"
                 style={{
-                  maxWidth: '100%',
-                  maxHeight: 'calc(100dvh - 120px)',
-                  width: 'auto',
-                  height: 'auto'
+                  width: 'calc(50vw - 24px)',
+                  height: 'auto',
+                  maxHeight: 'calc(100dvh - 140px)',
+                  objectFit: 'contain'
                 }}
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
@@ -483,14 +483,13 @@ function VotingPageContent() {
               </div>
             </button>
 
-            {/* Right image (Option B) - container shrinks to fit image */}
+            {/* Right image (Option B) */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl shadow-md transition-all duration-100
+              className={`relative rounded-lg sm:rounded-xl shadow-md transition-all duration-100
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-              style={{ maxWidth: 'calc(50% - 8px)' }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -498,10 +497,10 @@ function VotingPageContent() {
                 alt="Option B"
                 className="block rounded-lg sm:rounded-xl"
                 style={{
-                  maxWidth: '100%',
-                  maxHeight: 'calc(100dvh - 120px)',
-                  width: 'auto',
-                  height: 'auto'
+                  width: 'calc(50vw - 24px)',
+                  height: 'auto',
+                  maxHeight: 'calc(100dvh - 140px)',
+                  objectFit: 'contain'
                 }}
               />
               <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
