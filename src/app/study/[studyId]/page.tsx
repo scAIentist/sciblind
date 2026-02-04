@@ -16,12 +16,12 @@ interface Study {
 // Slovenian translations
 const translations = {
   sl: {
-    enterCode: 'Vnesite svojo dostopno kodo',
+    enterCode: 'Vnesite svojo kodo za dostop',
     codePlaceholder: 'npr. IzVRS-ocenjevalec12345',
     submit: 'Nadaljuj',
     loading: 'Nalaganje...',
     verifying: 'Preverjanje...',
-    invalidCode: 'Neveljavna dostopna koda',
+    invalidCode: 'Neveljavna koda za dostop',
     codeUsed: 'Ta koda je bila že uporabljena',
     codeExpired: 'Koda je potekla',
     codeInactive: 'Koda je bila deaktivirana',

@@ -93,6 +93,10 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 
 **Study ID**: `cml808mzc0000m104un333c69`
 
+**Title**: IzVRS Likovni natečaj 2025
+
+**Description**: Slepo primerjanje likovnih del učencev za izbor najboljših 12, ki bodo natisnjeni na sledilnikih. Pomagajte nam pri izboru!
+
 **Participant URL**: https://blind.scaientist.eu/study/cml808mzc0000m104un333c69
 
 **Study Links File**: `IzVRS-Study-Links.txt` (in project root)
@@ -257,10 +261,10 @@ DATABASE_URL="postgresql://postgres.rdsozrebfjjoknqonvbk:Sc.AI.entist!98@aws-1-e
 ## Known Issues & Fixes
 
 ### Responsive Layout Fix (2026-02-04)
-IzVRS images are landscape format (wide). Using responsive grid layout:
+IzVRS images are mixed format (landscape and portrait). Using responsive grid layout:
 - Mobile: Stacked vertically (1 column) for larger images
 - Desktop: Side-by-side (2 columns) for efficient space usage
-- Native `<img>` with `object-contain` for no cropping
+- Native `<img>` with `object-contain` - works for BOTH landscape AND portrait without cropping
 - Direct Supabase storage URLs (render API caused EXIF rotation issues)
 
 ### Matchmaking Variety Penalty (2026-02-04)

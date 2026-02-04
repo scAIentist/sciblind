@@ -38,14 +38,14 @@ interface PairData {
 // Translations
 const translations = {
   sl: {
-    selectImage: 'Izberite sliko, ki vam je bolj všeč.',
+    selectImage: 'Izberite sliko, ki se vam zdi bolj primerna.',
     loading: 'Nalaganje...',
     categoryComplete: 'Kategorija zaključena!',
     allComplete: 'Hvala za sodelovanje!',
     selectCategory: 'Izberite kategorijo',
     of: 'od',
-    comparisons: 'primerjav',
-    tapToSelect: 'Tapnite sliko za izbiro',
+    comparisons: 'primerjave',
+    tapToSelect: 'Za izbor pritisnite na željeno sliko',
     keyboardHint: 'Tipki A/B ali puščici ←/→',
     error: 'Prišlo je do napake. Poskusite znova.',
     backToCategories: '← Kategorije',
@@ -453,14 +453,15 @@ function VotingPageContent() {
       </div>
 
       {/* Main voting area - CSS Grid: stacked on mobile (1 col), side-by-side on desktop (2 cols) */}
-      <main className="flex-1 min-h-0 p-2 sm:p-4">
+      {/* Works for BOTH landscape (wide) AND portrait (tall) images - object-contain prevents cropping */}
+      <main className="flex-1 min-h-0 p-2 sm:p-4 overflow-hidden">
         {pair && leftItem && rightItem ? (
           <div className="w-full h-full grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
-            {/* Left image (Option A) */}
+            {/* Option A */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center
+              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center overflow-hidden
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
             >
@@ -475,11 +476,11 @@ function VotingPageContent() {
               </div>
             </button>
 
-            {/* Right image (Option B) */}
+            {/* Option B */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center
+              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center overflow-hidden
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
                 focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
             >
