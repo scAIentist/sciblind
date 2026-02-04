@@ -105,7 +105,12 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 4. IzVRS-ocenjevalec95696
 5. IzVRS-ocenjevalec86339
 
-**Test Code** (reusable): `IzVRS-TEST-MODE`
+**Test Code**: `IzVRS-TEST-MODE`
+- Unlimited uses (no single-use restriction)
+- Does NOT affect ELO ratings or item statistics
+- Sessions marked as `isTestSession: true`
+- Comparisons flagged as `test_session`
+- UI flow works normally for testing
 
 **Artist ELO Boost**:
 - Rank 1 (10 pts): +200 ELO (starting at 1700)
