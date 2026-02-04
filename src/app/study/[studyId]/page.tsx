@@ -133,10 +133,10 @@ export default function StudyEntryPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">{t.loading}</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-slate-500">{t.loading}</p>
         </div>
       </div>
     );
@@ -144,28 +144,26 @@ export default function StudyEntryPage() {
 
   if (!study) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-destructive">{error || t.studyNotFound}</h1>
+          <h1 className="text-2xl font-bold text-red-600">{error || t.studyNotFound}</h1>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted">
+    <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-50 to-slate-100">
       {/* Header with logos */}
       <header className="p-6">
         <div className="max-w-4xl mx-auto flex items-center justify-center gap-6 flex-wrap">
           {study.logoUrls?.map((logo, idx) => (
             <div key={idx} className="relative h-16 w-auto">
-              <Image
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src={`/logos/${logo}`}
                 alt="Logo"
-                width={160}
-                height={64}
                 className="h-16 w-auto object-contain"
-                priority
               />
             </div>
           ))}
@@ -175,10 +173,10 @@ export default function StudyEntryPage() {
       {/* Main content */}
       <main className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <div className="bg-card border rounded-2xl p-8 shadow-lg">
+          <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-lg">
             <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold mb-2">{study.title}</h1>
-              <p className="text-muted-foreground">{study.description}</p>
+              <h1 className="text-2xl font-bold text-slate-900 mb-2">{study.title}</h1>
+              <p className="text-slate-600">{study.description}</p>
             </div>
 
             {study.requireAccessCode ? (
@@ -186,7 +184,7 @@ export default function StudyEntryPage() {
                 <div>
                   <label
                     htmlFor="code"
-                    className="block text-sm font-medium mb-2"
+                    className="block text-sm font-medium text-slate-700 mb-2"
                   >
                     {t.enterCode}
                   </label>
@@ -196,7 +194,7 @@ export default function StudyEntryPage() {
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     placeholder={t.codePlaceholder}
-                    className="w-full px-4 py-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-center font-mono text-lg"
+                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center font-mono text-lg bg-white text-slate-900"
                     disabled={isSubmitting}
                     autoComplete="off"
                     autoFocus
@@ -204,7 +202,7 @@ export default function StudyEntryPage() {
                 </div>
 
                 {error && (
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm text-center">
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm text-center">
                     {error}
                   </div>
                 )}
@@ -212,7 +210,7 @@ export default function StudyEntryPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting || !code.trim()}
-                  className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? t.verifying : t.submit}
                 </button>
@@ -221,7 +219,7 @@ export default function StudyEntryPage() {
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                className="w-full py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
                 {isSubmitting ? t.verifying : t.submit}
               </button>
@@ -231,13 +229,13 @@ export default function StudyEntryPage() {
       </main>
 
       {/* Footer */}
-      <footer className="p-6 text-center text-sm text-muted-foreground">
+      <footer className="p-6 text-center text-sm text-slate-500">
         {t.poweredBy}{' '}
         <a
           href="https://scaientist.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-primary hover:underline"
+          className="text-blue-600 hover:underline"
         >
           ScAIentist
         </a>

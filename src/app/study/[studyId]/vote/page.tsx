@@ -453,15 +453,15 @@ function VotingPageContent() {
       </div>
 
       {/* Main voting area - fills remaining space */}
-      <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-3">
+      <main className="flex-1 min-h-0 p-2 sm:p-3">
         {pair && leftItem && rightItem ? (
-          /* Side-by-side layout - images fill available space while maintaining aspect ratio */
-          <div className="w-full h-full flex flex-row gap-2 sm:gap-3 items-center justify-center">
+          /* Side-by-side grid - each cell contains a complete, uncropped image */
+          <div className="w-full h-full grid grid-cols-2 gap-2 sm:gap-3">
             {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative flex-1 h-full max-h-full flex items-center justify-center bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl overflow-hidden shadow-sm transition-all duration-100
+              className={`relative w-full h-full flex items-center justify-center p-1 sm:p-2 bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl shadow-sm transition-all duration-100
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg hover:ring-2 hover:ring-blue-400 cursor-pointer'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500`}
             >
@@ -469,9 +469,9 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="max-w-full max-h-full w-auto h-auto object-contain"
+                style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
               />
-              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-2 py-0.5 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
+              <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-2.5 py-1 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
                 A
               </div>
             </button>
@@ -480,7 +480,7 @@ function VotingPageContent() {
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative flex-1 h-full max-h-full flex items-center justify-center bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl overflow-hidden shadow-sm transition-all duration-100
+              className={`relative w-full h-full flex items-center justify-center p-1 sm:p-2 bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl shadow-sm transition-all duration-100
                 ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg hover:ring-2 hover:ring-blue-400 cursor-pointer'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500`}
             >
@@ -488,16 +488,16 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="max-w-full max-h-full w-auto h-auto object-contain"
+                style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
               />
-              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-2 py-0.5 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
+              <div className="absolute top-2 left-2 sm:top-3 sm:left-3 px-2.5 py-1 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
                 B
               </div>
             </button>
           </div>
         ) : (
-          <div className="text-center">
-            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <div className="w-full h-full flex items-center justify-center">
+            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
       </main>
