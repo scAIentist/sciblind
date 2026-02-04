@@ -4,37 +4,63 @@
  * POST /api/participate/[studyId]/vote
  *
  * Records a comparison vote and updates ELO ratings.
- * Includes fraud detection and full audit trail.
+ *
+ * Security features:
+ * - Rate limiting (60 votes per minute per session)
+ * - Strict input validation
+ * - Fraud detection (response time analysis)
+ * - Full audit trail
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { calculateEloChange } from '@/lib/ranking/elo';
+import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
+import { validateVoteRequest, isValidCuid } from '@/lib/security/validation';
 
 // Minimum response time in ms (faster is flagged as suspicious)
 const MIN_RESPONSE_TIME_MS = 500;
-
-interface VoteBody {
-  sessionToken: string;
-  itemAId: string;
-  itemBId: string;
-  winnerId: string;
-  leftItemId: string;
-  rightItemId: string;
-  categoryId?: string;
-  responseTimeMs: number;
-}
+// Maximum response time (likely AFK or bot patterns)
+const MAX_RESPONSE_TIME_MS = 300000; // 5 minutes
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ studyId: string }> }
 ) {
+  let sessionToken: string | null = null;
+
   try {
     const { studyId } = await params;
-    const body: VoteBody = await request.json();
+
+    // Validate studyId format first
+    if (!isValidCuid(studyId)) {
+      return NextResponse.json(
+        { error: 'Invalid study ID format', errorKey: 'INVALID_STUDY_ID' },
+        { status: 400 }
+      );
+    }
+
+    // Parse and validate request body
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        { error: 'Invalid JSON body', errorKey: 'INVALID_JSON' },
+        { status: 400 }
+      );
+    }
+
+    const validation = validateVoteRequest(body);
+    if (!validation.valid || !validation.data) {
+      return NextResponse.json(
+        { error: validation.error || 'Invalid request', errorKey: 'VALIDATION_ERROR' },
+        { status: 400 }
+      );
+    }
 
     const {
-      sessionToken,
+      sessionToken: token,
       itemAId,
       itemBId,
       winnerId,
@@ -42,27 +68,28 @@ export async function POST(
       rightItemId,
       categoryId,
       responseTimeMs,
-    } = body;
+    } = validation.data;
 
-    // Validate required fields
-    if (!sessionToken || !itemAId || !itemBId || !winnerId || !leftItemId || !rightItemId) {
-      return NextResponse.json(
-        { error: 'Missing required fields', errorKey: 'MISSING_FIELDS' },
-        { status: 400 }
-      );
-    }
+    sessionToken = token;
 
-    // Validate winner is one of the items
-    if (winnerId !== itemAId && winnerId !== itemBId) {
+    // Rate limit by session token
+    const rateLimit = checkRateLimit(token, RATE_LIMITS.vote);
+    const rateLimitHeaders = getRateLimitHeaders(rateLimit);
+
+    if (!rateLimit.success) {
       return NextResponse.json(
-        { error: 'Winner must be one of the compared items', errorKey: 'INVALID_WINNER' },
-        { status: 400 }
+        {
+          error: 'Voting too fast. Please slow down.',
+          errorKey: 'RATE_LIMITED',
+          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+        },
+        { status: 429, headers: rateLimitHeaders }
       );
     }
 
     // Get session
     const session = await prisma.session.findUnique({
-      where: { token: sessionToken },
+      where: { token },
       include: {
         study: true,
       },
@@ -71,21 +98,21 @@ export async function POST(
     if (!session) {
       return NextResponse.json(
         { error: 'Invalid session', errorKey: 'INVALID_SESSION' },
-        { status: 401 }
+        { status: 401, headers: rateLimitHeaders }
       );
     }
 
     if (session.studyId !== studyId) {
       return NextResponse.json(
         { error: 'Session does not belong to this study', errorKey: 'SESSION_MISMATCH' },
-        { status: 403 }
+        { status: 403, headers: rateLimitHeaders }
       );
     }
 
     if (session.isCompleted) {
       return NextResponse.json(
         { error: 'Session already completed', errorKey: 'SESSION_COMPLETED' },
-        { status: 400 }
+        { status: 400, headers: rateLimitHeaders }
       );
     }
 
@@ -98,14 +125,14 @@ export async function POST(
     if (!itemA || !itemB) {
       return NextResponse.json(
         { error: 'Items not found', errorKey: 'ITEMS_NOT_FOUND' },
-        { status: 404 }
+        { status: 404, headers: rateLimitHeaders }
       );
     }
 
     if (itemA.studyId !== studyId || itemB.studyId !== studyId) {
       return NextResponse.json(
         { error: 'Items do not belong to this study', errorKey: 'ITEMS_MISMATCH' },
-        { status: 403 }
+        { status: 403, headers: rateLimitHeaders }
       );
     }
 
@@ -114,7 +141,7 @@ export async function POST(
       if (itemA.categoryId !== itemB.categoryId) {
         return NextResponse.json(
           { error: 'Items must be from the same category', errorKey: 'CATEGORY_MISMATCH' },
-          { status: 400 }
+          { status: 400, headers: rateLimitHeaders }
         );
       }
     }
@@ -133,7 +160,7 @@ export async function POST(
     if (existingComparison) {
       return NextResponse.json(
         { error: 'This pair has already been compared', errorKey: 'DUPLICATE_COMPARISON' },
-        { status: 400 }
+        { status: 400, headers: rateLimitHeaders }
       );
     }
 
@@ -141,9 +168,14 @@ export async function POST(
     let isFlagged = false;
     let flagReason: string | null = null;
 
-    if (responseTimeMs && responseTimeMs < MIN_RESPONSE_TIME_MS) {
-      isFlagged = true;
-      flagReason = 'too_fast';
+    if (responseTimeMs !== undefined) {
+      if (responseTimeMs < MIN_RESPONSE_TIME_MS) {
+        isFlagged = true;
+        flagReason = 'too_fast';
+      } else if (responseTimeMs > MAX_RESPONSE_TIME_MS) {
+        isFlagged = true;
+        flagReason = 'too_slow';
+      }
     }
 
     // Determine winner and loser
@@ -170,7 +202,7 @@ export async function POST(
           winnerId,
           leftItemId,
           rightItemId,
-          responseTimeMs: responseTimeMs || null,
+          responseTimeMs: responseTimeMs ?? null,
           isFlagged,
           flagReason,
         },
@@ -204,12 +236,16 @@ export async function POST(
 
       // Update session stats
       const newComparisonCount = session.comparisonCount + 1;
-      const newAvgResponseTime = session.avgResponseTimeMs
-        ? Math.round(
-            (session.avgResponseTimeMs * session.comparisonCount + (responseTimeMs || 0)) /
-              newComparisonCount
-          )
-        : responseTimeMs || null;
+      const validResponseTime = responseTimeMs !== undefined && responseTimeMs > 0;
+      const newAvgResponseTime =
+        validResponseTime && session.avgResponseTimeMs
+          ? Math.round(
+              (session.avgResponseTimeMs * session.comparisonCount + responseTimeMs) /
+                newComparisonCount
+            )
+          : validResponseTime
+            ? responseTimeMs
+            : session.avgResponseTimeMs;
 
       await tx.session.update({
         where: { id: session.id },
@@ -233,12 +269,15 @@ export async function POST(
       return comparison;
     });
 
-    return NextResponse.json({
-      success: true,
-      comparisonId: result.id,
-      flagged: isFlagged,
-      sessionComparisonCount: session.comparisonCount + 1,
-    });
+    return NextResponse.json(
+      {
+        success: true,
+        comparisonId: result.id,
+        flagged: isFlagged,
+        sessionComparisonCount: session.comparisonCount + 1,
+      },
+      { headers: rateLimitHeaders }
+    );
   } catch (error) {
     console.error('Vote error:', error);
     return NextResponse.json(

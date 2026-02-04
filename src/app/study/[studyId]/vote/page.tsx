@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 
@@ -36,47 +36,46 @@ interface PairData {
   };
 }
 
-// Slovenian translations
+// Translations
 const translations = {
   sl: {
     selectImage: 'Izberite sliko, ki vam je bolj všeč.',
     loading: 'Nalaganje...',
-    submitting: 'Shranjevanje...',
     categoryComplete: 'Kategorija zaključena!',
     allComplete: 'Hvala za sodelovanje!',
     selectCategory: 'Izberite kategorijo',
-    continueVoting: 'Nadaljuj z glasovanjem',
-    progress: 'Napredek',
     of: 'od',
     comparisons: 'primerjav',
-    keyboardHint: 'Uporabite tipki A (levo) ali L (desno) za hitrejše glasovanje',
-    error: 'Prišlo je do napake',
-    sessionExpired: 'Seja je potekla',
-    backToCategories: 'Nazaj na kategorije',
+    tapToSelect: 'Tapnite sliko za izbiro',
+    keyboardHint: 'Tipki A/L ali puščici',
+    error: 'Prišlo je do napake. Poskusite znova.',
+    backToCategories: '← Kategorije',
     finishStudy: 'Zaključi',
     thankYou: 'Hvala!',
     resultsHidden: 'Rezultati bodo objavljeni po zaključku študije.',
+    tryAgain: 'Poskusi znova',
   },
   en: {
     selectImage: 'Select the image you prefer.',
     loading: 'Loading...',
-    submitting: 'Saving...',
     categoryComplete: 'Category complete!',
     allComplete: 'Thank you for participating!',
     selectCategory: 'Select a category',
-    continueVoting: 'Continue voting',
-    progress: 'Progress',
     of: 'of',
     comparisons: 'comparisons',
-    keyboardHint: 'Use A (left) or L (right) keys for faster voting',
-    error: 'An error occurred',
-    sessionExpired: 'Session expired',
-    backToCategories: 'Back to categories',
+    tapToSelect: 'Tap an image to select',
+    keyboardHint: 'Keys A/L or arrows',
+    error: 'An error occurred. Please try again.',
+    backToCategories: '← Categories',
     finishStudy: 'Finish',
     thankYou: 'Thank you!',
     resultsHidden: 'Results will be published after the study ends.',
+    tryAgain: 'Try again',
   },
 };
+
+// Supabase storage base URL
+const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
 
 export default function VotingPage() {
   const params = useParams();
@@ -85,295 +84,345 @@ export default function VotingPage() {
   const studyId = params.studyId as string;
   const token = searchParams.get('token');
 
+  // State
   const [study, setStudy] = useState<any>(null);
   const [pair, setPair] = useState<PairData | null>(null);
+  const [nextPair, setNextPair] = useState<PairData | null>(null); // Prefetched next pair
   const [categories, setCategories] = useState<CategoryProgress[]>([]);
   const [currentCategoryId, setCurrentCategoryId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [categoryComplete, setCategoryComplete] = useState(false);
-  const [allComplete, setAllComplete] = useState(false);
-  const [showCategories, setShowCategories] = useState(false);
+  const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'complete'>('loading');
 
-  const startTimeRef = useRef<number>(0);
-  const preloadedImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  // Refs
+  const startTimeRef = useRef<number>(Date.now());
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const voteInProgressRef = useRef(false);
 
+  // Memoized translations
   const lang = (study?.language || 'sl') as keyof typeof translations;
-  const t = translations[lang] || translations.sl;
+  const t = useMemo(() => translations[lang] || translations.sl, [lang]);
 
-  // Fetch study info
+  // Optimized image URL builder
+  const getImageUrl = useCallback((item: ItemData): string => {
+    if (item.imageUrl) return item.imageUrl;
+    if (item.imageKey) {
+      const parts = item.imageKey.split('/');
+      if (parts[0] === 'izvrs' && parts.length === 3) {
+        return `${SUPABASE_STORAGE_URL}/${parts[1]}/${parts[2]}`;
+      }
+    }
+    return '/placeholder.png';
+  }, []);
+
+  // Fetch study on mount
   useEffect(() => {
     if (!token) {
-      router.push(`/study/${studyId}`);
+      router.replace(`/study/${studyId}`);
       return;
     }
-    fetchStudy();
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    async function init() {
+      try {
+        // Fetch study info
+        const studyRes = await fetch(`/api/studies/${studyId}`, { signal: controller.signal });
+        if (!studyRes.ok) throw new Error('Study not found');
+        const studyData = await studyRes.json();
+        setStudy(studyData);
+
+        // Fetch first pair
+        await fetchNextPair(undefined, controller.signal);
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          setError(t.error);
+          setIsLoading(false);
+        }
+      }
+    }
+
+    init();
+
+    return () => {
+      controller.abort();
+    };
   }, [studyId, token]);
 
   // Keyboard shortcuts
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if (isSubmitting || !pair || categoryComplete || allComplete) return;
+    if (viewState !== 'voting' || !pair || isVoting) return;
 
-      if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') {
-        handleVote(pair.leftItemId);
-      } else if (e.key === 'l' || e.key === 'L' || e.key === 'ArrowRight') {
-        handleVote(pair.rightItemId);
+    function handleKeyDown(e: KeyboardEvent) {
+      if (voteInProgressRef.current) return;
+
+      const key = e.key.toLowerCase();
+      if (key === 'a' || key === 'arrowleft') {
+        e.preventDefault();
+        handleVote(pair!.leftItemId);
+      } else if (key === 'l' || key === 'arrowright') {
+        e.preventDefault();
+        handleVote(pair!.rightItemId);
       }
     }
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pair, isSubmitting, categoryComplete, allComplete]);
+  }, [viewState, pair, isVoting]);
 
-  async function fetchStudy() {
-    try {
-      const res = await fetch(`/api/studies/${studyId}`);
-      if (!res.ok) throw new Error('Study not found');
-      const data = await res.json();
-      setStudy(data);
-      fetchNextPair();
-    } catch (err) {
-      setError(t.error);
-      setIsLoading(false);
+  // Prefetch next pair after current pair loads
+  useEffect(() => {
+    if (pair && viewState === 'voting' && currentCategoryId) {
+      prefetchNextPair(currentCategoryId);
     }
-  }
+  }, [pair, currentCategoryId, viewState]);
 
-  async function fetchNextPair(categoryId?: string) {
-    setIsLoading(true);
-    setError(null);
-    setCategoryComplete(false);
-
+  async function fetchNextPair(categoryId?: string, signal?: AbortSignal) {
     try {
       const url = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
       url.searchParams.set('token', token!);
-      if (categoryId) {
-        url.searchParams.set('categoryId', categoryId);
-      }
+      if (categoryId) url.searchParams.set('categoryId', categoryId);
 
-      const res = await fetch(url.toString());
+      const res = await fetch(url.toString(), { signal });
       const data = await res.json();
 
       if (!res.ok) {
         if (data.errorKey === 'INVALID_SESSION') {
           localStorage.removeItem(`sciblind-session-${studyId}`);
-          router.push(`/study/${studyId}`);
+          router.replace(`/study/${studyId}`);
           return;
         }
         throw new Error(data.error);
       }
 
-      // Handle category selection required
+      // Handle different response types
       if (data.requiresCategorySelection) {
         setCategories(data.categories);
-        setShowCategories(true);
+        setViewState('categories');
         setIsLoading(false);
         return;
       }
 
-      // Handle all complete
       if (data.complete || data.allCategoriesComplete) {
-        setAllComplete(true);
+        setViewState('complete');
         setIsLoading(false);
         return;
       }
 
-      // Handle category complete
       if (data.categoryComplete) {
-        setCategoryComplete(true);
-        setCurrentCategoryId(data.categoryId);
+        // Refresh categories and show selection
+        const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`, { signal });
+        const catData = await catRes.json();
+        if (catData.requiresCategorySelection) {
+          setCategories(catData.categories);
+        }
+        setViewState('categories');
         setIsLoading(false);
-        // Refresh categories
-        fetchCategories();
         return;
       }
 
-      // Got a pair
+      // Got a pair - set it and start timer
       setPair(data);
       setCurrentCategoryId(data.categoryId);
       startTimeRef.current = Date.now();
+      setViewState('voting');
       setIsLoading(false);
 
-      // Preload images
-      preloadImages(data);
     } catch (err: any) {
-      setError(err.message || t.error);
-      setIsLoading(false);
+      if (err.name !== 'AbortError') {
+        setError(err.message || t.error);
+        setIsLoading(false);
+      }
     }
   }
 
-  async function fetchCategories() {
+  async function prefetchNextPair(categoryId: string) {
     try {
       const url = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
       url.searchParams.set('token', token!);
+      url.searchParams.set('categoryId', categoryId);
+      url.searchParams.set('prefetch', 'true');
 
       const res = await fetch(url.toString());
       const data = await res.json();
 
-      if (data.requiresCategorySelection) {
-        setCategories(data.categories);
+      if (res.ok && data.itemA && data.itemB) {
+        setNextPair(data);
+        // Preload images
+        preloadImage(getImageUrl(data.itemA));
+        preloadImage(getImageUrl(data.itemB));
       }
-    } catch (err) {
-      console.error('Failed to fetch categories', err);
+    } catch {
+      // Silent fail for prefetch
     }
   }
 
-  function preloadImages(pairData: PairData) {
-    const imageKeys = [pairData.itemA.imageKey, pairData.itemB.imageKey].filter(Boolean);
-    imageKeys.forEach((key) => {
-      if (key && !preloadedImagesRef.current.has(key)) {
-        const img = new window.Image();
-        img.src = `/api/studies/${studyId}/items/${key.split('/').pop()}/image`;
-        preloadedImagesRef.current.set(key, img);
-      }
-    });
+  function preloadImage(src: string) {
+    const img = new window.Image();
+    img.src = src;
   }
 
-  const handleVote = useCallback(
-    async (winnerId: string) => {
-      if (!pair || isSubmitting) return;
+  const handleVote = useCallback(async (winnerId: string) => {
+    if (!pair || isVoting || voteInProgressRef.current) return;
 
-      setIsSubmitting(true);
-      const responseTimeMs = Date.now() - startTimeRef.current;
+    voteInProgressRef.current = true;
+    setIsVoting(true);
+    const responseTimeMs = Date.now() - startTimeRef.current;
 
-      try {
-        const res = await fetch(`/api/participate/${studyId}/vote`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionToken: token,
-            itemAId: pair.itemA.id,
-            itemBId: pair.itemB.id,
-            winnerId,
-            leftItemId: pair.leftItemId,
-            rightItemId: pair.rightItemId,
-            categoryId: currentCategoryId,
-            responseTimeMs,
-          }),
-        });
+    try {
+      const res = await fetch(`/api/participate/${studyId}/vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionToken: token,
+          itemAId: pair.itemA.id,
+          itemBId: pair.itemB.id,
+          winnerId,
+          leftItemId: pair.leftItemId,
+          rightItemId: pair.rightItemId,
+          categoryId: currentCategoryId,
+          responseTimeMs,
+        }),
+      });
 
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error);
-        }
-
-        // Fetch next pair
-        fetchNextPair(currentCategoryId || undefined);
-      } catch (err: any) {
-        setError(err.message || t.error);
-      } finally {
-        setIsSubmitting(false);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error);
       }
-    },
-    [pair, isSubmitting, token, studyId, currentCategoryId]
-  );
+
+      // Use prefetched pair if available, otherwise fetch new one
+      if (nextPair && nextPair.categoryId === currentCategoryId) {
+        setPair(nextPair);
+        setNextPair(null);
+        startTimeRef.current = Date.now();
+        setIsVoting(false);
+        voteInProgressRef.current = false;
+      } else {
+        await fetchNextPair(currentCategoryId || undefined);
+        setIsVoting(false);
+        voteInProgressRef.current = false;
+      }
+
+    } catch (err: any) {
+      setError(err.message || t.error);
+      setIsVoting(false);
+      voteInProgressRef.current = false;
+    }
+  }, [pair, isVoting, token, studyId, currentCategoryId, nextPair, t.error]);
 
   function selectCategory(categoryId: string) {
-    setShowCategories(false);
     setCurrentCategoryId(categoryId);
+    setIsLoading(true);
     fetchNextPair(categoryId);
   }
 
-  function getImageUrl(item: ItemData): string {
-    if (item.imageUrl) {
-      return item.imageUrl;
-    }
-    if (item.imageKey) {
-      // Build Supabase Storage URL from imageKey
-      // imageKey format: "izvrs/3-razredi/1.png"
-      const parts = item.imageKey.split('/');
-      if (parts[0] === 'izvrs' && parts.length === 3) {
-        return `https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images/${parts[1]}/${parts[2]}`;
-      }
-      return `/uploads/${item.imageKey}`;
-    }
-    return '/placeholder.png';
+  function retryAfterError() {
+    setError(null);
+    setIsLoading(true);
+    fetchNextPair(currentCategoryId || undefined);
   }
 
+  // Get left and right items
+  const leftItem = pair ? (pair.leftItemId === pair.itemA.id ? pair.itemA : pair.itemB) : null;
+  const rightItem = pair ? (pair.rightItemId === pair.itemA.id ? pair.itemA : pair.itemB) : null;
+
+  // ========== RENDER ==========
+
   // Loading state
-  if (isLoading && !showCategories) {
+  if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">{t.loading}</p>
+          <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="mt-4 text-slate-500 text-sm">{t.loading}</p>
         </div>
       </div>
     );
   }
 
-  // All complete
-  if (allComplete) {
+  // Error state
+  if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted p-6">
-        <div className="text-center max-w-md">
-          <div className="w-20 h-20 bg-green-100 dark:bg-green-900 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg
-              className="w-10 h-10 text-green-600 dark:text-green-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M5 13l4 4L19 7"
-              />
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold mb-4">{t.thankYou}</h1>
-          <p className="text-muted-foreground mb-8">{t.allComplete}</p>
-          <p className="text-sm text-muted-foreground">{t.resultsHidden}</p>
+          <p className="text-slate-700 dark:text-slate-300 mb-4">{error}</p>
+          <button
+            onClick={retryAfterError}
+            className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium active:scale-95 transition-transform"
+          >
+            {t.tryAgain}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Complete state
+  if (viewState === 'complete') {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-6">
+        <div className="text-center max-w-sm">
+          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-3">{t.thankYou}</h1>
+          <p className="text-slate-600 dark:text-slate-400 mb-6">{t.allComplete}</p>
+          <p className="text-sm text-slate-500">{t.resultsHidden}</p>
         </div>
       </div>
     );
   }
 
   // Category selection
-  if (showCategories || categoryComplete) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-background to-muted p-6">
-        <div className="max-w-2xl mx-auto">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-2xl font-bold mb-2">
-              {categoryComplete ? t.categoryComplete : t.selectCategory}
-            </h1>
-          </div>
+  if (viewState === 'categories') {
+    const allCategoriesComplete = categories.every(c => c.isComplete);
 
-          {/* Categories */}
-          <div className="space-y-4">
+    return (
+      <div className="min-h-[100dvh] bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4 safe-area-inset">
+        <div className="max-w-lg mx-auto pt-4">
+          <h1 className="text-xl font-bold text-center text-slate-900 dark:text-white mb-6">
+            {allCategoriesComplete ? t.categoryComplete : t.selectCategory}
+          </h1>
+
+          <div className="space-y-3">
             {categories.map((cat) => (
               <button
                 key={cat.id}
                 onClick={() => !cat.isComplete && selectCategory(cat.id)}
                 disabled={cat.isComplete}
-                className={`w-full p-6 rounded-xl border text-left transition-all ${
+                className={`w-full p-4 rounded-xl text-left transition-all active:scale-[0.98] ${
                   cat.isComplete
-                    ? 'bg-muted/50 border-muted cursor-not-allowed opacity-60'
-                    : 'bg-card border-border hover:border-primary hover:shadow-md cursor-pointer'
+                    ? 'bg-slate-100 dark:bg-slate-800/50 opacity-60'
+                    : 'bg-white dark:bg-slate-800 shadow-sm hover:shadow-md active:shadow-sm'
                 }`}
               >
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-semibold">{cat.name}</h3>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-semibold text-slate-900 dark:text-white">{cat.name}</h3>
                   {cat.isComplete && (
-                    <span className="px-3 py-1 bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 text-sm rounded-full">
-                      ✓
+                    <span className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                      </svg>
                     </span>
                   )}
                 </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm text-muted-foreground">
-                    <span>
-                      {cat.completed} {t.of} {cat.target} {t.comparisons}
-                    </span>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs text-slate-500">
+                    <span>{cat.completed} {t.of} {cat.target}</span>
                     <span>{cat.percentage}%</span>
                   </div>
-                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-primary transition-all"
+                      className="h-full bg-blue-600 rounded-full transition-all duration-300"
                       style={{ width: `${cat.percentage}%` }}
                     />
                   </div>
@@ -382,12 +431,11 @@ export default function VotingPage() {
             ))}
           </div>
 
-          {/* Check if all complete */}
-          {categories.every((c) => c.isComplete) && (
-            <div className="mt-8 text-center">
+          {allCategoriesComplete && (
+            <div className="mt-6 text-center">
               <button
-                onClick={() => setAllComplete(true)}
-                className="px-8 py-3 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 transition-colors"
+                onClick={() => setViewState('complete')}
+                className="px-8 py-3 bg-green-600 text-white rounded-xl font-semibold active:scale-95 transition-transform shadow-lg shadow-green-600/25"
               >
                 {t.finishStudy}
               </button>
@@ -398,63 +446,66 @@ export default function VotingPage() {
     );
   }
 
-  // Voting interface
+  // Voting interface - optimized for mobile
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-background to-muted">
-      {/* Header with progress */}
-      <header className="p-4 border-b bg-card/50 backdrop-blur">
-        <div className="max-w-6xl mx-auto">
-          <div className="flex items-center justify-between mb-2">
-            <button
-              onClick={() => setShowCategories(true)}
-              className="text-sm text-muted-foreground hover:text-foreground"
-            >
-              ← {t.backToCategories}
-            </button>
-            <span className="text-sm text-muted-foreground">
-              {pair?.progress.completed} / {pair?.progress.target} {t.comparisons}
-            </span>
-          </div>
-          <div className="h-2 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-primary transition-all"
-              style={{ width: `${pair?.progress.percentage || 0}%` }}
-            />
-          </div>
+    <div className="min-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 safe-area-inset">
+      {/* Compact header */}
+      <header className="flex-none px-4 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center justify-between max-w-2xl mx-auto">
+          <button
+            onClick={() => setViewState('categories')}
+            className="text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 py-1"
+          >
+            {t.backToCategories}
+          </button>
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+            {pair?.progress.completed}/{pair?.progress.target}
+          </span>
+        </div>
+        {/* Progress bar */}
+        <div className="h-1 bg-slate-200 dark:bg-slate-800 rounded-full mt-2 max-w-2xl mx-auto overflow-hidden">
+          <div
+            className="h-full bg-blue-600 rounded-full transition-all duration-300"
+            style={{ width: `${pair?.progress.percentage || 0}%` }}
+          />
         </div>
       </header>
 
-      {/* Prompt */}
-      <div className="text-center py-6 px-4">
-        <h1 className="text-xl md:text-2xl font-semibold">{study?.participantPrompt || t.selectImage}</h1>
-        <p className="text-sm text-muted-foreground mt-2">{t.keyboardHint}</p>
+      {/* Prompt - compact on mobile */}
+      <div className="flex-none text-center py-3 px-4">
+        <h1 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white leading-tight">
+          {study?.participantPrompt || t.selectImage}
+        </h1>
+        <p className="text-xs text-slate-400 mt-1 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area */}
-      <main className="flex-1 flex items-center justify-center p-4">
-        {error ? (
-          <div className="text-center text-destructive">
-            <p>{error}</p>
-          </div>
-        ) : pair ? (
-          <div className="w-full max-w-6xl grid grid-cols-2 gap-4 md:gap-8">
+      {/* Main voting area - fills remaining space */}
+      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 min-h-0">
+        {pair && leftItem && rightItem && (
+          <div className="w-full h-full max-w-4xl grid grid-cols-2 gap-2 sm:gap-4">
             {/* Left image */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
-              disabled={isSubmitting}
-              className="group relative aspect-square bg-card border-2 border-transparent hover:border-primary rounded-2xl overflow-hidden transition-all hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-primary/50 disabled:opacity-50"
+              disabled={isVoting}
+              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+                ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
+                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
-              <Image
-                src={getImageUrl(
-                  pair.leftItemId === pair.itemA.id ? pair.itemA : pair.itemB
-                )}
-                alt="Left option"
-                fill
-                className="object-contain p-2"
-                priority
-              />
-              <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/10 transition-colors" />
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 text-white rounded-full text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute inset-0">
+                <Image
+                  src={getImageUrl(leftItem)}
+                  alt="Option A"
+                  fill
+                  sizes="50vw"
+                  className="object-contain p-1 sm:p-2"
+                  priority
+                  quality={85}
+                />
+              </div>
+              {/* Touch feedback overlay */}
+              <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors" />
+              {/* Label - visible on larger screens */}
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 A
               </div>
             </button>
@@ -462,36 +513,37 @@ export default function VotingPage() {
             {/* Right image */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
-              disabled={isSubmitting}
-              className="group relative aspect-square bg-card border-2 border-transparent hover:border-primary rounded-2xl overflow-hidden transition-all hover:shadow-xl focus:outline-none focus:ring-4 focus:ring-primary/50 disabled:opacity-50"
+              disabled={isVoting}
+              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+                ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
+                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
-              <Image
-                src={getImageUrl(
-                  pair.rightItemId === pair.itemA.id ? pair.itemA : pair.itemB
-                )}
-                alt="Right option"
-                fill
-                className="object-contain p-2"
-                priority
-              />
-              <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/10 transition-colors" />
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 px-4 py-2 bg-black/50 text-white rounded-full text-sm opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="absolute inset-0">
+                <Image
+                  src={getImageUrl(rightItem)}
+                  alt="Option B"
+                  fill
+                  sizes="50vw"
+                  className="object-contain p-1 sm:p-2"
+                  priority
+                  quality={85}
+                />
+              </div>
+              {/* Touch feedback overlay */}
+              <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors" />
+              {/* Label */}
+              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 L
               </div>
             </button>
           </div>
-        ) : null}
+        )}
       </main>
 
-      {/* Footer */}
-      {isSubmitting && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur flex items-center justify-center z-50">
-          <div className="text-center">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-            <p className="mt-2 text-sm text-muted-foreground">{t.submitting}</p>
-          </div>
-        </div>
-      )}
+      {/* Mobile tap hint */}
+      <div className="flex-none text-center pb-3 sm:hidden">
+        <p className="text-xs text-slate-400">{t.tapToSelect}</p>
+      </div>
     </div>
   );
 }

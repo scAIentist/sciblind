@@ -5,11 +5,17 @@
  *
  * Returns the next pair of items to compare for a session.
  * Handles category-based matchmaking when hasCategorySeparation is enabled.
+ *
+ * Security features:
+ * - Rate limiting (120 requests per minute per session)
+ * - Input validation
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { selectNextPair, calculateRecommendedComparisons, getCategoryProgress } from '@/lib/matchmaking';
+import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
+import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
 
 export async function GET(
   request: NextRequest,
@@ -21,10 +27,49 @@ export async function GET(
     const sessionToken = searchParams.get('token');
     const categoryId = searchParams.get('categoryId');
 
+    // Validate studyId format
+    if (!isValidCuid(studyId)) {
+      return NextResponse.json(
+        { error: 'Invalid study ID format', errorKey: 'INVALID_STUDY_ID' },
+        { status: 400 }
+      );
+    }
+
+    // Validate session token
     if (!sessionToken) {
       return NextResponse.json(
         { error: 'Session token is required', errorKey: 'TOKEN_REQUIRED' },
         { status: 400 }
+      );
+    }
+
+    if (!isValidSessionToken(sessionToken)) {
+      return NextResponse.json(
+        { error: 'Invalid session token format', errorKey: 'INVALID_TOKEN' },
+        { status: 400 }
+      );
+    }
+
+    // Validate categoryId if provided
+    if (categoryId && !isValidCuid(categoryId)) {
+      return NextResponse.json(
+        { error: 'Invalid category ID format', errorKey: 'INVALID_CATEGORY_ID' },
+        { status: 400 }
+      );
+    }
+
+    // Rate limit by session token
+    const rateLimit = checkRateLimit(sessionToken, RATE_LIMITS.nextPair);
+    const rateLimitHeaders = getRateLimitHeaders(rateLimit);
+
+    if (!rateLimit.success) {
+      return NextResponse.json(
+        {
+          error: 'Too many requests. Please slow down.',
+          errorKey: 'RATE_LIMITED',
+          retryAfter: Math.ceil((rateLimit.resetAt - Date.now()) / 1000),
+        },
+        { status: 429, headers: rateLimitHeaders }
       );
     }
 
@@ -46,22 +91,25 @@ export async function GET(
     if (!session) {
       return NextResponse.json(
         { error: 'Invalid session', errorKey: 'INVALID_SESSION' },
-        { status: 401 }
+        { status: 401, headers: rateLimitHeaders }
       );
     }
 
     if (session.studyId !== studyId) {
       return NextResponse.json(
         { error: 'Session does not belong to this study', errorKey: 'SESSION_MISMATCH' },
-        { status: 403 }
+        { status: 403, headers: rateLimitHeaders }
       );
     }
 
     if (session.isCompleted) {
-      return NextResponse.json({
-        complete: true,
-        message: 'Session already completed',
-      });
+      return NextResponse.json(
+        {
+          complete: true,
+          message: 'Session already completed',
+        },
+        { headers: rateLimitHeaders }
+      );
     }
 
     const study = session.study;
@@ -76,7 +124,7 @@ export async function GET(
         if (!validCategory) {
           return NextResponse.json(
             { error: 'Invalid category', errorKey: 'INVALID_CATEGORY' },
-            { status: 400 }
+            { status: 400, headers: rateLimitHeaders }
           );
         }
         targetCategoryId = categoryId;
@@ -101,10 +149,13 @@ export async function GET(
           })
         );
 
-        return NextResponse.json({
-          requiresCategorySelection: true,
-          categories: categoryProgress,
-        });
+        return NextResponse.json(
+          {
+            requiresCategorySelection: true,
+            categories: categoryProgress,
+          },
+          { headers: rateLimitHeaders }
+        );
       }
     }
 
@@ -121,7 +172,7 @@ export async function GET(
     if (items.length < 2) {
       return NextResponse.json(
         { error: 'Not enough items in category', errorKey: 'INSUFFICIENT_ITEMS' },
-        { status: 400 }
+        { status: 400, headers: rateLimitHeaders }
       );
     }
 
@@ -136,7 +187,7 @@ export async function GET(
     // Check if category is complete
     if (sessionComparisons.length >= targetComparisons) {
       // Update session progress
-      const progress = session.categoryProgress as Record<string, number> || {};
+      const progress = (session.categoryProgress as Record<string, number>) || {};
       if (targetCategoryId) {
         progress[targetCategoryId] = sessionComparisons.length;
       }
@@ -165,19 +216,25 @@ export async function GET(
             data: { isCompleted: true },
           });
 
-          return NextResponse.json({
-            complete: true,
-            allCategoriesComplete: true,
-          });
+          return NextResponse.json(
+            {
+              complete: true,
+              allCategoriesComplete: true,
+            },
+            { headers: rateLimitHeaders }
+          );
         }
       }
 
-      return NextResponse.json({
-        categoryComplete: true,
-        categoryId: targetCategoryId,
-        comparisonsInCategory: sessionComparisons.length,
-        targetComparisons,
-      });
+      return NextResponse.json(
+        {
+          categoryComplete: true,
+          categoryId: targetCategoryId,
+          comparisonsInCategory: sessionComparisons.length,
+          targetComparisons,
+        },
+        { headers: rateLimitHeaders }
+      );
     }
 
     // Select next pair
@@ -185,36 +242,42 @@ export async function GET(
 
     if (!pair) {
       // No more pairs available (all exhausted)
-      return NextResponse.json({
-        categoryComplete: true,
-        categoryId: targetCategoryId,
-        noMorePairs: true,
-      });
+      return NextResponse.json(
+        {
+          categoryComplete: true,
+          categoryId: targetCategoryId,
+          noMorePairs: true,
+        },
+        { headers: rateLimitHeaders }
+      );
     }
 
     // Return pair info without revealing internal identifiers unnecessarily
-    return NextResponse.json({
-      itemA: {
-        id: pair.itemA.id,
-        imageUrl: pair.itemA.imageUrl,
-        imageKey: pair.itemA.imageKey,
-        text: pair.itemA.text,
+    return NextResponse.json(
+      {
+        itemA: {
+          id: pair.itemA.id,
+          imageUrl: pair.itemA.imageUrl,
+          imageKey: pair.itemA.imageKey,
+          text: pair.itemA.text,
+        },
+        itemB: {
+          id: pair.itemB.id,
+          imageUrl: pair.itemB.imageUrl,
+          imageKey: pair.itemB.imageKey,
+          text: pair.itemB.text,
+        },
+        leftItemId: pair.leftItemId,
+        rightItemId: pair.rightItemId,
+        categoryId: targetCategoryId,
+        progress: {
+          completed: sessionComparisons.length,
+          target: targetComparisons,
+          percentage: Math.round((sessionComparisons.length / targetComparisons) * 100),
+        },
       },
-      itemB: {
-        id: pair.itemB.id,
-        imageUrl: pair.itemB.imageUrl,
-        imageKey: pair.itemB.imageKey,
-        text: pair.itemB.text,
-      },
-      leftItemId: pair.leftItemId,
-      rightItemId: pair.rightItemId,
-      categoryId: targetCategoryId,
-      progress: {
-        completed: sessionComparisons.length,
-        target: targetComparisons,
-        percentage: Math.round((sessionComparisons.length / targetComparisons) * 100),
-      },
-    });
+      { headers: rateLimitHeaders }
+    );
   } catch (error) {
     console.error('Next pair error:', error);
     return NextResponse.json(
