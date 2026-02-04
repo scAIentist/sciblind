@@ -62,45 +62,75 @@ export function selectNextPair(
   // Find best pair: prioritize under-compared items, then similar ELO
   let bestPair: { itemA: Item; itemB: Item; score: number } | null = null;
 
-  // Limit search to avoid O(n^2) on large sets
-  const searchLimit = Math.min(items.length, 50);
+  // For small-medium sets (≤100 items), do full O(n²) search for optimal pairing
+  // For larger sets, use sampling to avoid performance issues
+  const useFullSearch = items.length <= 100;
 
-  for (let i = 0; i < searchLimit; i++) {
-    const itemA = itemsByNeed[i];
+  if (useFullSearch) {
+    // Full search: check all pairs for optimal selection
+    for (let i = 0; i < itemsByNeed.length; i++) {
+      const itemA = itemsByNeed[i];
 
-    for (let j = i + 1; j < Math.min(searchLimit, items.length); j++) {
-      const itemB = itemsByNeed[j];
+      for (let j = i + 1; j < itemsByNeed.length; j++) {
+        const itemB = itemsByNeed[j];
 
-      // Check if already compared
-      const pairKey = [itemA.id, itemB.id].sort().join('-');
-      if (comparedPairs.has(pairKey)) {
-        continue;
-      }
+        // Check if already compared
+        const pairKey = [itemA.id, itemB.id].sort().join('-');
+        if (comparedPairs.has(pairKey)) {
+          continue;
+        }
 
-      // Score this pair (lower is better)
-      // - Prioritize under-compared items
-      // - Prefer similar ELO ratings (more informative comparison)
-      const comparisonNeed = itemA.comparisonCount + itemB.comparisonCount;
-      const eloDiff = Math.abs(itemA.eloRating - itemB.eloRating);
-      const score = comparisonNeed * 10 + eloDiff;
+        // Score this pair (lower is better)
+        // - Prioritize under-compared items
+        // - Prefer similar ELO ratings (more informative comparison)
+        const comparisonNeed = itemA.comparisonCount + itemB.comparisonCount;
+        const eloDiff = Math.abs(itemA.eloRating - itemB.eloRating);
+        const score = comparisonNeed * 10 + eloDiff;
 
-      if (!bestPair || score < bestPair.score) {
-        bestPair = { itemA, itemB, score };
-      }
-    }
-  }
-
-  if (!bestPair) {
-    // Fallback: find any uncomared pair
-    for (let i = 0; i < items.length; i++) {
-      for (let j = i + 1; j < items.length; j++) {
-        const pairKey = [items[i].id, items[j].id].sort().join('-');
-        if (!comparedPairs.has(pairKey)) {
-          bestPair = { itemA: items[i], itemB: items[j], score: 0 };
-          break;
+        if (!bestPair || score < bestPair.score) {
+          bestPair = { itemA, itemB, score };
         }
       }
-      if (bestPair) break;
+    }
+  } else {
+    // Sampled search for large sets: check top 50 under-compared items
+    const searchLimit = 50;
+
+    for (let i = 0; i < searchLimit; i++) {
+      const itemA = itemsByNeed[i];
+
+      for (let j = i + 1; j < items.length; j++) {
+        const itemB = itemsByNeed[j];
+
+        // Check if already compared
+        const pairKey = [itemA.id, itemB.id].sort().join('-');
+        if (comparedPairs.has(pairKey)) {
+          continue;
+        }
+
+        // Score this pair (lower is better)
+        const comparisonNeed = itemA.comparisonCount + itemB.comparisonCount;
+        const eloDiff = Math.abs(itemA.eloRating - itemB.eloRating);
+        const score = comparisonNeed * 10 + eloDiff;
+
+        if (!bestPair || score < bestPair.score) {
+          bestPair = { itemA, itemB, score };
+        }
+      }
+    }
+
+    // Fallback for large sets: if no pair found in sampled search, do full search
+    if (!bestPair) {
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          const pairKey = [items[i].id, items[j].id].sort().join('-');
+          if (!comparedPairs.has(pairKey)) {
+            bestPair = { itemA: items[i], itemB: items[j], score: 0 };
+            break;
+          }
+        }
+        if (bestPair) break;
+      }
     }
   }
 

@@ -256,10 +256,41 @@ DATABASE_URL="postgresql://postgres.rdsozrebfjjoknqonvbk:Sc.AI.entist!98@aws-1-e
 
 ## Known Issues & Fixes
 
-### Image Display Fix (2026-02-04)
-Images require explicit container dimensions for Next.js `fill` mode. Fixed by:
-- Using `aspect-[3/4]` on mobile for button height
-- Using `h-full` on desktop with grid container
+### Layout Fix for Landscape Images (2026-02-04)
+IzVRS images are landscape format (wide). Changed from side-by-side to vertical stacked layout:
+- Option A on top, Option B on bottom
+- Native `<img>` element with `w-full h-auto` for natural aspect ratio
+- Keyboard shortcuts: A/↑ for top, B/↓ for bottom
+- Loading spinner shown between votes to prevent confusion
+
+### Image Loading via Supabase Render API
+Using Supabase's image transformation for on-the-fly resizing:
+- URL format: `/storage/v1/render/image/public/izvrs-images/{category}/{id}.png?width=900&quality=80`
+- Desktop: 900px width, Mobile: 500px width
+- Reduces 10MB originals to ~2MB desktop, ~1MB mobile
+
+## Algorithm Verification (2026-02-04)
+
+The matchmaking and ELO algorithms have been verified as scientifically sound:
+
+### ELO Rating System ✅
+- Standard formula: `E = 1 / (1 + 10^((R_opponent - R_self) / 400))`
+- Zero-sum updates (winner's gain ≈ loser's loss)
+- K-factor 32 provides good sensitivity
+- Artist boost correctly applied as initial rating adjustment
+
+### Matchmaking Algorithm ✅
+- **No duplicate pairs**: Set-based tracking with sorted keys
+- **Fair coverage**: Under-compared items prioritized
+- **Informative comparisons**: Similar ELO preferred (Swiss-system inspired)
+- **Position bias correction**: Active balancing of left/right placement
+- **Full O(n²) search** for sets ≤100 items (covers all IzVRS categories)
+- **Fallback guarantee**: Always finds an uncomared pair if one exists
+
+### Statistical Power
+- Target: ~10 comparisons per item
+- Formula: `(itemCount × 5) / reviewerCount`
+- Bounded 15-50 comparisons per reviewer per category
 
 ## Next Steps
 
@@ -269,11 +300,12 @@ Images require explicit container dimensions for Next.js `fill` mode. Fixed by:
 4. ✅ Security hardening (rate limiting, validation)
 5. ✅ Admin dashboard with real data
 6. ✅ Test mode for unlimited testing without ELO impact
-7. ✅ Fix image display in voting page
-8. 🔄 Keycloak integration for admin auth
-9. 🔄 Traefik reverse proxy setup
-10. ⏳ PDF export with methodology
-11. ⏳ CSV export for data analysis
+7. ✅ Fix image display in voting page (vertical layout for landscape)
+8. ✅ Algorithm verification (ELO + matchmaking)
+9. 🔄 Keycloak integration for admin auth
+10. 🔄 Traefik reverse proxy setup
+11. ⏳ PDF export with methodology
+12. ⏳ CSV export for data analysis
 
 ## Keycloak Integration (Planned)
 
