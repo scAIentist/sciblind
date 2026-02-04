@@ -20,11 +20,11 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 | Database Schema | Complete | Category, AccessCode, ELO tracking, audit trail, test mode |
 | Supabase Connection | Complete | PostgreSQL via Transaction Pooler |
 | ELO Ranking System | Complete | Artist boost (+200 to +20), tie-breaking |
-| Matchmaking Algorithm | Complete | Position bias prevention, adaptive pair selection |
+| Matchmaking Algorithm | Complete | Position bias prevention, adaptive pair selection, variety penalty |
 | Access Code Auth | Complete | SHA256 hashing, single-use + test mode support |
 | Voting API | Complete | Full audit trail, fraud detection, rate limiting |
 | Rankings API | Complete | Confidence indicators, position bias stats |
-| Participant UI | Complete | Mobile optimized, Slovenian translations, responsive images |
+| Participant UI | Complete | Mobile stacked layout, desktop side-by-side, Slovenian translations |
 | Admin Dashboard | Complete | Real-time stats, rankings, session tracking |
 | Security | Complete | Rate limiting, input validation, security headers |
 | Images | Complete | Uploaded to Supabase Storage |
@@ -256,18 +256,19 @@ DATABASE_URL="postgresql://postgres.rdsozrebfjjoknqonvbk:Sc.AI.entist!98@aws-1-e
 
 ## Known Issues & Fixes
 
-### Layout Fix for Landscape Images (2026-02-04)
-IzVRS images are landscape format (wide). Changed from side-by-side to vertical stacked layout:
-- Option A on top, Option B on bottom
-- Native `<img>` element with `w-full h-auto` for natural aspect ratio
-- Keyboard shortcuts: A/↑ for top, B/↓ for bottom
-- Loading spinner shown between votes to prevent confusion
+### Responsive Layout Fix (2026-02-04)
+IzVRS images are landscape format (wide). Using responsive grid layout:
+- Mobile: Stacked vertically (1 column) for larger images
+- Desktop: Side-by-side (2 columns) for efficient space usage
+- Native `<img>` with `object-contain` for no cropping
+- Direct Supabase storage URLs (render API caused EXIF rotation issues)
 
-### Image Loading via Supabase Render API
-Using Supabase's image transformation for on-the-fly resizing:
-- URL format: `/storage/v1/render/image/public/izvrs-images/{category}/{id}.png?width=900&quality=80`
-- Desktop: 900px width, Mobile: 500px width
-- Reduces 10MB originals to ~2MB desktop, ~1MB mobile
+### Matchmaking Variety Penalty (2026-02-04)
+Added variety penalty to prevent same image appearing consecutively:
+- Tracks last 3 comparisons' items
+- Recently shown items get score penalty (50/recency)
+- Still prioritizes fair coverage (under-compared items first)
+- Balances scientific validity with user perception of fairness
 
 ## Algorithm Verification (2026-02-04)
 
@@ -284,8 +285,9 @@ The matchmaking and ELO algorithms have been verified as scientifically sound:
 - **Fair coverage**: Under-compared items prioritized
 - **Informative comparisons**: Similar ELO preferred (Swiss-system inspired)
 - **Position bias correction**: Active balancing of left/right placement
+- **Variety penalty**: Recently shown items penalized to prevent repetition
 - **Full O(n²) search** for sets ≤100 items (covers all IzVRS categories)
-- **Fallback guarantee**: Always finds an uncomared pair if one exists
+- **Fallback guarantee**: Always finds an uncompared pair if one exists
 
 ### Statistical Power
 - Target: ~10 comparisons per item

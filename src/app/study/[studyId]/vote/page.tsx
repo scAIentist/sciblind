@@ -452,10 +452,10 @@ function VotingPageContent() {
         <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - CSS Grid with two equal columns, images use object-fit: contain */}
+      {/* Main voting area - CSS Grid: stacked on mobile (1 col), side-by-side on desktop (2 cols) */}
       <main className="flex-1 min-h-0 p-2 sm:p-4">
         {pair && leftItem && rightItem ? (
-          <div className="w-full h-full grid grid-cols-2 gap-2 sm:gap-4">
+          <div className="w-full h-full grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
             {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}

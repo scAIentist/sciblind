@@ -6,6 +6,7 @@
  * 2. Preferring informative comparisons (similar ELO ratings)
  * 3. Avoiding repeated pairs within a session
  * 4. Maintaining position balance (left/right)
+ * 5. Adding variety to prevent same image appearing consecutively
  */
 
 import type { Item, Comparison } from '@prisma/client';
@@ -24,7 +25,8 @@ export interface MatchPair {
  * 1. Filter out pairs already compared in this session
  * 2. Prioritize items with fewer total comparisons
  * 3. Among those, prefer items with similar ELO (more informative)
- * 4. Randomly assign left/right position
+ * 4. Apply variety penalty to avoid same item appearing consecutively
+ * 5. Randomly assign left/right position with bias correction
  *
  * @param items - All items in the category
  * @param sessionComparisons - Comparisons already made in this session
@@ -46,6 +48,19 @@ export function selectNextPair(
     // Store both orderings to catch duplicates
     const key1 = [comp.itemAId, comp.itemBId].sort().join('-');
     comparedPairs.add(key1);
+  }
+
+  // Track recently shown items (last 3 comparisons) to add variety
+  // This prevents the same image from appearing in consecutive comparisons
+  const recentItems = new Map<string, number>(); // itemId -> recency (1 = most recent)
+  const recentWindow = Math.min(3, sessionComparisons.length);
+  for (let i = 0; i < recentWindow; i++) {
+    const comp = sessionComparisons[sessionComparisons.length - 1 - i];
+    if (comp) {
+      const recency = i + 1; // 1 = just shown, 2 = 2 comparisons ago, etc.
+      if (!recentItems.has(comp.itemAId)) recentItems.set(comp.itemAId, recency);
+      if (!recentItems.has(comp.itemBId)) recentItems.set(comp.itemBId, recency);
+    }
   }
 
   // Calculate total possible pairs
@@ -81,11 +96,19 @@ export function selectNextPair(
         }
 
         // Score this pair (lower is better)
-        // - Prioritize under-compared items
-        // - Prefer similar ELO ratings (more informative comparison)
+        // - Prioritize under-compared items (weight: 10)
+        // - Prefer similar ELO ratings (weight: 1)
+        // - Penalize recently shown items for variety (weight: 50 per recency level)
         const comparisonNeed = itemA.comparisonCount + itemB.comparisonCount;
         const eloDiff = Math.abs(itemA.eloRating - itemB.eloRating);
-        const score = comparisonNeed * 10 + eloDiff;
+
+        // Variety penalty: if item was shown recently, add penalty based on recency
+        // recency 1 (just shown) = +50, recency 2 = +25, recency 3 = +17
+        const aRecency = recentItems.get(itemA.id) || 0;
+        const bRecency = recentItems.get(itemB.id) || 0;
+        const varietyPenalty = (aRecency > 0 ? 50 / aRecency : 0) + (bRecency > 0 ? 50 / bRecency : 0);
+
+        const score = comparisonNeed * 10 + eloDiff + varietyPenalty;
 
         if (!bestPair || score < bestPair.score) {
           bestPair = { itemA, itemB, score };
@@ -108,10 +131,13 @@ export function selectNextPair(
           continue;
         }
 
-        // Score this pair (lower is better)
+        // Score this pair (lower is better) with variety penalty
         const comparisonNeed = itemA.comparisonCount + itemB.comparisonCount;
         const eloDiff = Math.abs(itemA.eloRating - itemB.eloRating);
-        const score = comparisonNeed * 10 + eloDiff;
+        const aRecency = recentItems.get(itemA.id) || 0;
+        const bRecency = recentItems.get(itemB.id) || 0;
+        const varietyPenalty = (aRecency > 0 ? 50 / aRecency : 0) + (bRecency > 0 ? 50 / bRecency : 0);
+        const score = comparisonNeed * 10 + eloDiff + varietyPenalty;
 
         if (!bestPair || score < bestPair.score) {
           bestPair = { itemA, itemB, score };
