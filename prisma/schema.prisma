@@ -11,23 +11,43 @@ datasource db {
 }
 
 model Study {
-  id                        String      @id @default(cuid())
-  createdAt                 DateTime    @default(now())
-  updatedAt                 DateTime    @updatedAt
+  id                        String        @id @default(cuid())
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
   title                     String
-  description               String      @db.Text
-  participantPrompt         String      // "Which image should be printed?"
-  inputType                 InputType   // IMAGE | TEXT
+  description               String        @db.Text
+  participantPrompt         String        // "Izberite sliko, ki vam je bolj všeč."
+  inputType                 InputType     // IMAGE | TEXT
   rankingMethod             RankingMethod // ELO | BRADLEY_TERRY
 
   // Settings
-  comparisonsPerParticipant Int         @default(20)
-  targetTopN                Int?        // Optional: target top-N selection
-  eloKFactor                Float       @default(32.0)
-  eloInitialRating          Float       @default(1500.0)
+  comparisonsPerParticipant Int           @default(20)
+  targetTopN                Int?          // Optional: target top-N selection
+  eloKFactor                Float         @default(32.0)
+  eloInitialRating          Float         @default(1500.0)
+
+  // Category support
+  hasCategorySeparation     Boolean       @default(false) // Items don't mix between categories
+  categories                Category[]
+
+  // Access control
+  requireAccessCode         Boolean       @default(false)
+  accessCodes               AccessCode[]
+
+  // Localization
+  language                  String        @default("en") // "sl" for Slovenian
+
+  // Branding
+  logoUrls                  String[]      // ["Logo-ScAIentist.png", "IzVRS-logo.png"]
+
+  // Visibility
+  showRankingsToParticipants Boolean      @default(true)
+
+  // Methodology for PDF export
+  methodologyText           String?       @db.Text
 
   // State
-  isActive                  Boolean     @default(true)
+  isActive                  Boolean       @default(true)
   publishedAt               DateTime?
 
   // Relations
@@ -36,9 +56,48 @@ model Study {
   comparisons               Comparison[]
 
   // Admin ownership
-  createdBy                 String      // Keycloak user ID
+  createdBy                 String        // Keycloak user ID or "seed-script"
 
   @@index([createdBy])
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  createdAt    DateTime     @default(now())
+  studyId      String
+  study        Study        @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  name         String       // "3. razredi"
+  slug         String       // "3-razredi" for URL-safe routing
+  description  String?
+  displayOrder Int          @default(0)
+
+  items        Item[]
+  comparisons  Comparison[]
+
+  @@unique([studyId, slug])
+  @@index([studyId])
+}
+
+model AccessCode {
+  id              String    @id @default(cuid())
+  createdAt       DateTime  @default(now())
+  studyId         String
+  study           Study     @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  code            String    @unique  // "IzVRS-ocenjevalec12345"
+  codeHash        String    @unique  // SHA256 for secure comparison
+  label           String?            // "Ocenjevalec 1" admin reference
+
+  usedAt          DateTime?
+  usedBySessionId String?   @unique
+  session         Session?  @relation(fields: [usedBySessionId], references: [id])
+
+  isActive        Boolean   @default(true)
+  expiresAt       DateTime?
+
+  @@index([studyId])
+  @@index([codeHash])
 }
 
 model Item {
@@ -47,14 +106,25 @@ model Item {
   studyId         String
   study           Study        @relation(fields: [studyId], references: [id], onDelete: Cascade)
 
+  // Category relation
+  categoryId      String?
+  category        Category?    @relation(fields: [categoryId], references: [id])
+
   // Type-specific data
   imageUrl        String?      // For IMAGE type (proxy endpoint)
   imageKey        String?      // S3 key or local path
   text            String?      @db.Text // For TEXT type
 
+  // External identifier for mapping from Excel/CSV
+  externalId      String?      // "1", "31", etc. from spreadsheet
+
   // Optional metadata (not shown to participants)
-  label           String?      // Admin reference (e.g., "Camera A")
+  label           String?      // Admin reference (e.g., "Slika 1")
   tags            String[]     // For filtering/grouping
+
+  // Artist initial rating
+  artistRank      Int?         // 1-10, where 1 is best (10 points)
+  artistEloBoost  Float        @default(0) // Calculated: rank 1 = +200, rank 10 = +20
 
   // Ranking data
   eloRating       Float        @default(1500.0)
@@ -73,31 +143,39 @@ model Item {
   comparisonsB    Comparison[] @relation("ItemB")
 
   @@index([studyId])
+  @@index([categoryId])
+  @@index([externalId, studyId])
 }
 
 model Session {
-  id                String      @id @default(cuid())
-  createdAt         DateTime    @default(now())
-  lastActiveAt      DateTime    @updatedAt
+  id                String       @id @default(cuid())
+  createdAt         DateTime     @default(now())
+  lastActiveAt      DateTime     @updatedAt
   studyId           String
-  study             Study       @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  study             Study        @relation(fields: [studyId], references: [id], onDelete: Cascade)
 
   // Anonymous participant tracking
-  token             String      @unique // For resume functionality
-  ipHash            String?     // SHA256 hash for duplicate detection
+  token             String       @unique // For resume functionality
+  ipHash            String?      // SHA256 hash for duplicate detection
   userAgent         String?
 
+  // Access code relation
+  accessCode        AccessCode?
+
+  // Category progress tracking
+  categoryProgress  Json?        // {"cat1-id": 15, "cat2-id": 10, ...}
+
   // Bot detection
-  captchaToken      String?     // Turnstile/hCaptcha verification token
+  captchaToken      String?      // Turnstile/hCaptcha verification token
   captchaVerifiedAt DateTime?
 
   // Fraud indicators
-  isFlagged         Boolean     @default(false)
-  flagReason        String?     // "fast_response", "pattern_detected", etc.
+  isFlagged         Boolean      @default(false)
+  flagReason        String?      // "fast_response", "pattern_detected", etc.
   avgResponseTimeMs Int?
 
-  comparisonCount   Int         @default(0)
-  isCompleted       Boolean     @default(false)
+  comparisonCount   Int          @default(0)
+  isCompleted       Boolean      @default(false)
 
   comparisons       Comparison[]
   surveyResponse    SurveyResponse?
@@ -108,29 +186,35 @@ model Session {
 }
 
 model Comparison {
-  id             String   @id @default(cuid())
-  createdAt      DateTime @default(now())
+  id             String    @id @default(cuid())
+  createdAt      DateTime  @default(now())
   studyId        String
-  study          Study    @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  study          Study     @relation(fields: [studyId], references: [id], onDelete: Cascade)
   sessionId      String
-  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Category tracking
+  categoryId     String?
+  category       Category? @relation(fields: [categoryId], references: [id])
+
   itemAId        String
-  itemA          Item     @relation("ItemA", fields: [itemAId], references: [id])
+  itemA          Item      @relation("ItemA", fields: [itemAId], references: [id])
   itemBId        String
-  itemB          Item     @relation("ItemB", fields: [itemBId], references: [id])
-  winnerId       String   // itemAId or itemBId
+  itemB          Item      @relation("ItemB", fields: [itemBId], references: [id])
+  winnerId       String    // itemAId or itemBId
 
   // UI state (for bias detection & audit)
-  leftItemId     String   // Which item was shown on left
-  rightItemId    String   // Which item was shown on right
-  responseTimeMs Int?     // Time to decision
+  leftItemId     String    // Which item was shown on left
+  rightItemId    String    // Which item was shown on right
+  responseTimeMs Int?      // Time to decision
 
   // Fraud detection
-  isFlagged      Boolean  @default(false)
-  flagReason     String?  // "too_fast", "pattern", "duplicate_pair", etc.
+  isFlagged      Boolean   @default(false)
+  flagReason     String?   // "too_fast", "pattern", "duplicate_pair", etc.
 
   @@index([studyId])
   @@index([sessionId])
+  @@index([categoryId])
   @@index([itemAId])
   @@index([itemBId])
 }
