@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
 
 interface ItemData {
   id: string;
@@ -482,23 +481,20 @@ export default function VotingPage() {
       {/* Main voting area - fills remaining space */}
       <main className="flex-1 flex items-center justify-center p-2 sm:p-4 min-h-0 overflow-hidden">
         {pair && leftItem && rightItem && (
-          <div className="w-full h-full max-w-5xl max-h-full grid grid-cols-2 gap-2 sm:gap-4">
+          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4" style={{ height: 'calc(100% - 1rem)' }}>
             {/* Left image */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative aspect-[3/4] sm:aspect-auto sm:h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+              className={`relative w-full h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
                 ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
-              <Image
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                fill
-                sizes="(max-width: 768px) 50vw, 40vw"
-                className="object-contain p-1 sm:p-2"
-                priority
-                quality={85}
+                className="absolute inset-0 w-full h-full object-contain p-1 sm:p-2"
               />
               {/* Touch feedback overlay */}
               <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors pointer-events-none" />
@@ -512,18 +508,15 @@ export default function VotingPage() {
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative aspect-[3/4] sm:aspect-auto sm:h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+              className={`relative w-full h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
                 ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
-              <Image
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                fill
-                sizes="(max-width: 768px) 50vw, 40vw"
-                className="object-contain p-1 sm:p-2"
-                priority
-                quality={85}
+                className="absolute inset-0 w-full h-full object-contain p-1 sm:p-2"
               />
               {/* Touch feedback overlay */}
               <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors pointer-events-none" />
