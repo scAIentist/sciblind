@@ -504,14 +504,14 @@ function VotingPageContent() {
       </div>
 
       {/* Main voting area - fills remaining space */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 min-h-0 overflow-hidden">
+      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
         {pair && leftItem && rightItem && (
-          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4" style={{ height: 'calc(100% - 1rem)' }}>
+          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4">
             {/* Left image */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative w-full h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+              className={`relative aspect-[3/4] bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
                 ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
@@ -533,7 +533,7 @@ function VotingPageContent() {
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative w-full h-full bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
+              className={`relative aspect-[3/4] bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
                 ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
