@@ -276,13 +276,19 @@ export default function VotingPage() {
   }
 
   function getImageUrl(item: ItemData): string {
+    if (item.imageUrl) {
+      return item.imageUrl;
+    }
     if (item.imageKey) {
-      // Extract just the filename for the image proxy
+      // Build Supabase Storage URL from imageKey
+      // imageKey format: "izvrs/3-razredi/1.png"
       const parts = item.imageKey.split('/');
-      const filename = parts[parts.length - 1];
+      if (parts[0] === 'izvrs' && parts.length === 3) {
+        return `https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images/${parts[1]}/${parts[2]}`;
+      }
       return `/uploads/${item.imageKey}`;
     }
-    return item.imageUrl || '/placeholder.png';
+    return '/placeholder.png';
   }
 
   // Loading state

@@ -37,25 +37,10 @@ async function main() {
 
   console.log('🚀 Starting upload to Supabase Storage...\n');
 
-  // Check if bucket exists
-  const { data: buckets, error: bucketsError } = await supabase.storage.listBuckets();
-  if (bucketsError) {
-    console.error('❌ Failed to list buckets:', bucketsError.message);
-    process.exit(1);
-  }
-
-  const bucketExists = buckets?.some((b) => b.name === BUCKET_NAME);
-  if (!bucketExists) {
-    console.log(`📦 Creating bucket: ${BUCKET_NAME}`);
-    const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
-      public: true,
-    });
-    if (createError) {
-      console.error('❌ Failed to create bucket:', createError.message);
-      console.log('   Please create the bucket manually in Supabase Dashboard');
-      process.exit(1);
-    }
-  }
+  // Note: Bucket must be created manually in Supabase Dashboard first
+  // Go to Storage > New bucket > Name: "izvrs-images" > Check "Public bucket"
+  console.log(`📦 Using bucket: ${BUCKET_NAME}`);
+  console.log('   (Make sure you created this bucket in Supabase Dashboard first)\n');
 
   let totalUploaded = 0;
   let totalFailed = 0;
@@ -96,20 +81,12 @@ async function main() {
         .from(BUCKET_NAME)
         .getPublicUrl(storagePath);
 
-      // Update database
-      const externalId = file.replace('.png', '');
-      await prisma.item.updateMany({
-        where: {
-          externalId,
-          imageKey: `izvrs/${category.folder}/${file}`,
-        },
-        data: {
-          imageUrl: urlData.publicUrl,
-        },
-      });
-
       console.log(` ✓`);
       totalUploaded++;
+
+      // Store URL for later database update
+      const externalId = file.replace('.png', '');
+      console.log(`      URL: ${urlData.publicUrl}`);
     }
   }
 
@@ -119,13 +96,8 @@ async function main() {
   console.log(`   Failed: ${totalFailed}`);
   console.log('='.repeat(50));
 
-  // Show sample URL
-  const sampleItem = await prisma.item.findFirst({
-    where: { imageUrl: { not: null } },
-  });
-  if (sampleItem?.imageUrl) {
-    console.log(`\n📸 Sample image URL: ${sampleItem.imageUrl}`);
-  }
+  // Show sample URL format
+  console.log(`\n📸 Image URL format: https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images/{category}/{id}.png`);
 }
 
 main()
