@@ -74,8 +74,6 @@ const translations = {
 };
 
 // Supabase storage base URL with image transformation
-// Using render/image endpoint for on-the-fly resizing
-const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
 const SUPABASE_RENDER_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/render/image/public/izvrs-images';
 
 function VotingPageContent() {
@@ -88,7 +86,6 @@ function VotingPageContent() {
   // State
   const [study, setStudy] = useState<any>(null);
   const [pair, setPair] = useState<PairData | null>(null);
-  const [nextPair, setNextPair] = useState<PairData | null>(null); // Prefetched next pair
   const [categories, setCategories] = useState<CategoryProgress[]>([]);
   const [currentCategoryId, setCurrentCategoryId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -123,13 +120,10 @@ function VotingPageContent() {
 
   // Optimized image URL builder with Supabase image transformation
   const getImageUrl = useCallback((item: ItemData): string => {
-    // Use smaller images on mobile for faster loading
-    const width = isMobile ? 400 : 800;
+    const width = isMobile ? 500 : 900;
     if (item.imageKey) {
       const parts = item.imageKey.split('/');
       if (parts[0] === 'izvrs' && parts.length === 3) {
-        // Use Supabase's image transformation API for optimized loading
-        // Resize to specified width, auto height, good quality
         return `${SUPABASE_RENDER_URL}/${parts[1]}/${parts[2]}?width=${width}&quality=80`;
       }
     }
@@ -139,7 +133,6 @@ function VotingPageContent() {
 
   // Fetch study on mount - wait for hydration to check token
   useEffect(() => {
-    // Don't do anything until hydrated (token might be null during SSR)
     if (!isHydrated) return;
 
     if (!token) {
@@ -152,13 +145,10 @@ function VotingPageContent() {
 
     async function init() {
       try {
-        // Fetch study info
         const studyRes = await fetch(`/api/studies/${studyId}`, { signal: controller.signal });
         if (!studyRes.ok) throw new Error('Study not found');
         const studyData = await studyRes.json();
         setStudy(studyData);
-
-        // Fetch first pair
         await fetchNextPair(undefined, controller.signal);
       } catch (err: any) {
         if (err.name !== 'AbortError') {
@@ -196,13 +186,6 @@ function VotingPageContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewState, pair, isVoting]);
 
-  // Prefetch next pair after current pair loads
-  useEffect(() => {
-    if (pair && viewState === 'voting' && currentCategoryId) {
-      prefetchNextPair(currentCategoryId);
-    }
-  }, [pair, currentCategoryId, viewState]);
-
   async function fetchNextPair(categoryId?: string, signal?: AbortSignal) {
     try {
       const url = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
@@ -221,7 +204,6 @@ function VotingPageContent() {
         throw new Error(data.error);
       }
 
-      // Handle different response types
       if (data.requiresCategorySelection) {
         setCategories(data.categories);
         setViewState('categories');
@@ -236,7 +218,6 @@ function VotingPageContent() {
       }
 
       if (data.categoryComplete) {
-        // Refresh categories and show selection
         const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`, { signal });
         const catData = await catRes.json();
         if (catData.requiresCategorySelection) {
@@ -247,7 +228,6 @@ function VotingPageContent() {
         return;
       }
 
-      // Got a pair - set it and start timer
       setPair(data);
       setCurrentCategoryId(data.categoryId);
       startTimeRef.current = Date.now();
@@ -260,32 +240,6 @@ function VotingPageContent() {
         setIsLoading(false);
       }
     }
-  }
-
-  async function prefetchNextPair(categoryId: string) {
-    try {
-      const url = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
-      url.searchParams.set('token', token!);
-      url.searchParams.set('categoryId', categoryId);
-      url.searchParams.set('prefetch', 'true');
-
-      const res = await fetch(url.toString());
-      const data = await res.json();
-
-      if (res.ok && data.itemA && data.itemB) {
-        setNextPair(data);
-        // Preload images
-        preloadImage(getImageUrl(data.itemA));
-        preloadImage(getImageUrl(data.itemB));
-      }
-    } catch {
-      // Silent fail for prefetch
-    }
-  }
-
-  function preloadImage(src: string) {
-    const img = new window.Image();
-    img.src = src;
   }
 
   const handleVote = useCallback(async (winnerId: string) => {
@@ -316,25 +270,16 @@ function VotingPageContent() {
         throw new Error(data.error);
       }
 
-      // Use prefetched pair if available, otherwise fetch new one
-      if (nextPair && nextPair.categoryId === currentCategoryId) {
-        setPair(nextPair);
-        setNextPair(null);
-        startTimeRef.current = Date.now();
-        setIsVoting(false);
-        voteInProgressRef.current = false;
-      } else {
-        await fetchNextPair(currentCategoryId || undefined);
-        setIsVoting(false);
-        voteInProgressRef.current = false;
-      }
+      // Always fetch fresh pair after voting (removed prefetch to avoid duplicates)
+      await fetchNextPair(currentCategoryId || undefined);
 
     } catch (err: any) {
       setError(err.message || t.error);
+    } finally {
       setIsVoting(false);
       voteInProgressRef.current = false;
     }
-  }, [pair, isVoting, token, studyId, currentCategoryId, nextPair, t.error]);
+  }, [pair, isVoting, token, studyId, currentCategoryId, t.error]);
 
   function selectCategory(categoryId: string) {
     setCurrentCategoryId(categoryId);
@@ -470,10 +415,10 @@ function VotingPageContent() {
     );
   }
 
-  // Voting interface - optimized for mobile
+  // Voting interface
   return (
     <div className="min-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 safe-area-inset">
-      {/* Compact header */}
+      {/* Header */}
       <header className="flex-none px-4 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
         <div className="flex items-center justify-between max-w-2xl mx-auto">
           <button
@@ -486,7 +431,6 @@ function VotingPageContent() {
             {pair?.progress.completed}/{pair?.progress.target}
           </span>
         </div>
-        {/* Progress bar */}
         <div className="h-1 bg-slate-200 dark:bg-slate-800 rounded-full mt-2 max-w-2xl mx-auto overflow-hidden">
           <div
             className="h-full bg-blue-600 rounded-full transition-all duration-300"
@@ -495,35 +439,32 @@ function VotingPageContent() {
         </div>
       </header>
 
-      {/* Prompt - compact on mobile */}
-      <div className="flex-none text-center py-3 px-4">
+      {/* Prompt */}
+      <div className="flex-none text-center py-2 px-4">
         <h1 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white leading-tight">
           {study?.participantPrompt || t.selectImage}
         </h1>
         <p className="text-xs text-slate-400 mt-1 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area - fills remaining space */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-hidden">
+      {/* Main voting area */}
+      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
         {pair && leftItem && rightItem && (
-          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4">
+          <div className="w-full max-w-4xl grid grid-cols-2 gap-2 sm:gap-4 items-center">
             {/* Left image */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative aspect-[3/4] bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
-                ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
+              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-100
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="absolute inset-0 w-full h-full object-contain p-1 sm:p-2"
+                className="w-full h-auto max-h-[70vh] object-contain"
               />
-              {/* Touch feedback overlay */}
-              <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors pointer-events-none" />
-              {/* Label - visible on larger screens */}
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 A
               </div>
@@ -533,19 +474,16 @@ function VotingPageContent() {
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative aspect-[3/4] bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-150
-                ${isVoting ? 'opacity-50 scale-[0.98]' : 'active:scale-[0.97] hover:shadow-lg'}
+              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-100
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
                 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="absolute inset-0 w-full h-full object-contain p-1 sm:p-2"
+                className="w-full h-auto max-h-[70vh] object-contain"
               />
-              {/* Touch feedback overlay */}
-              <div className="absolute inset-0 bg-blue-600/0 active:bg-blue-600/10 transition-colors pointer-events-none" />
-              {/* Label */}
               <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
                 L
               </div>
@@ -555,7 +493,7 @@ function VotingPageContent() {
       </main>
 
       {/* Mobile tap hint */}
-      <div className="flex-none text-center pb-3 sm:hidden">
+      <div className="flex-none text-center pb-2 sm:hidden">
         <p className="text-xs text-slate-400">{t.tapToSelect}</p>
       </div>
     </div>
