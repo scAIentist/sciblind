@@ -1,0 +1,182 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Study {
+  id                        String      @id @default(cuid())
+  createdAt                 DateTime    @default(now())
+  updatedAt                 DateTime    @updatedAt
+  title                     String
+  description               String      @db.Text
+  participantPrompt         String      // "Which image should be printed?"
+  inputType                 InputType   // IMAGE | TEXT
+  rankingMethod             RankingMethod // ELO | BRADLEY_TERRY
+
+  // Settings
+  comparisonsPerParticipant Int         @default(20)
+  targetTopN                Int?        // Optional: target top-N selection
+  eloKFactor                Float       @default(32.0)
+  eloInitialRating          Float       @default(1500.0)
+
+  // State
+  isActive                  Boolean     @default(true)
+  publishedAt               DateTime?
+
+  // Relations
+  items                     Item[]
+  sessions                  Session[]
+  comparisons               Comparison[]
+
+  // Admin ownership
+  createdBy                 String      // Keycloak user ID
+
+  @@index([createdBy])
+}
+
+model Item {
+  id              String       @id @default(cuid())
+  createdAt       DateTime     @default(now())
+  studyId         String
+  study           Study        @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  // Type-specific data
+  imageUrl        String?      // For IMAGE type (proxy endpoint)
+  imageKey        String?      // S3 key or local path
+  text            String?      @db.Text // For TEXT type
+
+  // Optional metadata (not shown to participants)
+  label           String?      // Admin reference (e.g., "Camera A")
+  tags            String[]     // For filtering/grouping
+
+  // Ranking data
+  eloRating       Float        @default(1500.0)
+  eloGames        Int          @default(0)
+  btAbility       Float        @default(0.0) // Bradley-Terry parameter
+
+  comparisonCount Int          @default(0)
+  winCount        Int          @default(0)
+  lossCount       Int          @default(0)
+
+  // Position bias tracking
+  leftCount       Int          @default(0)
+  rightCount      Int          @default(0)
+
+  comparisonsA    Comparison[] @relation("ItemA")
+  comparisonsB    Comparison[] @relation("ItemB")
+
+  @@index([studyId])
+}
+
+model Session {
+  id                String      @id @default(cuid())
+  createdAt         DateTime    @default(now())
+  lastActiveAt      DateTime    @updatedAt
+  studyId           String
+  study             Study       @relation(fields: [studyId], references: [id], onDelete: Cascade)
+
+  // Anonymous participant tracking
+  token             String      @unique // For resume functionality
+  ipHash            String?     // SHA256 hash for duplicate detection
+  userAgent         String?
+
+  // Bot detection
+  captchaToken      String?     // Turnstile/hCaptcha verification token
+  captchaVerifiedAt DateTime?
+
+  // Fraud indicators
+  isFlagged         Boolean     @default(false)
+  flagReason        String?     // "fast_response", "pattern_detected", etc.
+  avgResponseTimeMs Int?
+
+  comparisonCount   Int         @default(0)
+  isCompleted       Boolean     @default(false)
+
+  comparisons       Comparison[]
+  surveyResponse    SurveyResponse?
+
+  @@index([studyId])
+  @@index([token])
+  @@index([ipHash])
+}
+
+model Comparison {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  studyId        String
+  study          Study    @relation(fields: [studyId], references: [id], onDelete: Cascade)
+  sessionId      String
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  itemAId        String
+  itemA          Item     @relation("ItemA", fields: [itemAId], references: [id])
+  itemBId        String
+  itemB          Item     @relation("ItemB", fields: [itemBId], references: [id])
+  winnerId       String   // itemAId or itemBId
+
+  // UI state (for bias detection & audit)
+  leftItemId     String   // Which item was shown on left
+  rightItemId    String   // Which item was shown on right
+  responseTimeMs Int?     // Time to decision
+
+  // Fraud detection
+  isFlagged      Boolean  @default(false)
+  flagReason     String?  // "too_fast", "pattern", "duplicate_pair", etc.
+
+  @@index([studyId])
+  @@index([sessionId])
+  @@index([itemAId])
+  @@index([itemBId])
+}
+
+model SurveyResponse {
+  id              String   @id @default(cuid())
+  createdAt       DateTime @default(now())
+  studyId         String
+  sessionId       String   @unique
+  session         Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // Demographics (all optional)
+  ageRange        String?  // "18-24", "25-34", etc.
+  expertiseLevel  String?  // "novice", "intermediate", "expert"
+  customResponses Json?    // Future: custom survey questions
+
+  @@index([studyId])
+  @@index([sessionId])
+}
+
+model UsageMetrics {
+  id        String          @id @default(cuid())
+  createdAt DateTime        @default(now())
+  studyId   String?
+  eventType UsageEventType  // COMPARISON | IMAGE_UPLOAD | TEXT_ITEM
+  count     Int             @default(1)
+
+  // Future: link to organization/user for billing
+  userId    String?
+
+  @@index([studyId])
+  @@index([userId])
+}
+
+enum InputType {
+  IMAGE
+  TEXT
+}
+
+enum RankingMethod {
+  ELO
+  BRADLEY_TERRY
+}
+
+enum UsageEventType {
+  COMPARISON
+  IMAGE_UPLOAD
+  TEXT_ITEM
+}
