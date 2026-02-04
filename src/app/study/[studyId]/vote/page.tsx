@@ -73,8 +73,10 @@ const translations = {
   },
 };
 
-// Supabase storage base URL
+// Supabase storage base URL with image transformation
+// Using render/image endpoint for on-the-fly resizing
 const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
+const SUPABASE_RENDER_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/render/image/public/izvrs-images';
 
 export default function VotingPage() {
   const params = useParams();
@@ -103,17 +105,31 @@ export default function VotingPage() {
   const lang = (study?.language || 'sl') as keyof typeof translations;
   const t = useMemo(() => translations[lang] || translations.sl, [lang]);
 
-  // Optimized image URL builder
+  // Detect if mobile for responsive image sizing
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  // Optimized image URL builder with Supabase image transformation
   const getImageUrl = useCallback((item: ItemData): string => {
-    if (item.imageUrl) return item.imageUrl;
+    // Use smaller images on mobile for faster loading
+    const width = isMobile ? 400 : 800;
     if (item.imageKey) {
       const parts = item.imageKey.split('/');
       if (parts[0] === 'izvrs' && parts.length === 3) {
-        return `${SUPABASE_STORAGE_URL}/${parts[1]}/${parts[2]}`;
+        // Use Supabase's image transformation API for optimized loading
+        // Resize to specified width, auto height, good quality
+        return `${SUPABASE_RENDER_URL}/${parts[1]}/${parts[2]}?width=${width}&quality=80`;
       }
     }
+    if (item.imageUrl) return item.imageUrl;
     return '/placeholder.png';
-  }, []);
+  }, [isMobile]);
 
   // Fetch study on mount
   useEffect(() => {
