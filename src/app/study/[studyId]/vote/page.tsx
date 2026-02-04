@@ -46,7 +46,7 @@ const translations = {
     of: 'od',
     comparisons: 'primerjav',
     tapToSelect: 'Tapnite sliko za izbiro',
-    keyboardHint: 'Tipki A/B ali puščici ↑/↓',
+    keyboardHint: 'Tipki A/B ali puščici ←/→',
     error: 'Prišlo je do napake. Poskusite znova.',
     backToCategories: '← Kategorije',
     finishStudy: 'Zaključi',
@@ -63,7 +63,7 @@ const translations = {
     of: 'of',
     comparisons: 'comparisons',
     tapToSelect: 'Tap an image to select',
-    keyboardHint: 'Keys A/B or arrows ↑/↓',
+    keyboardHint: 'Keys A/B or arrows ←/→',
     error: 'An error occurred. Please try again.',
     backToCategories: '← Categories',
     finishStudy: 'Finish',
@@ -173,12 +173,12 @@ function VotingPageContent() {
       if (voteInProgressRef.current) return;
 
       const key = e.key.toLowerCase();
-      // A or Up arrow = top image (Option A)
-      if (key === 'a' || key === 'arrowup') {
+      // A or Left arrow = left/top image (Option A)
+      if (key === 'a' || key === 'arrowleft') {
         e.preventDefault();
         handleVote(pair!.leftItemId);
-      // B or Down arrow = bottom image (Option B)
-      } else if (key === 'b' || key === 'arrowdown') {
+      // B or Right arrow = right/bottom image (Option B)
+      } else if (key === 'b' || key === 'arrowright') {
         e.preventDefault();
         handleVote(pair!.rightItemId);
       }
@@ -420,23 +420,23 @@ function VotingPageContent() {
     );
   }
 
-  // Voting interface
+  // Voting interface - BOTH images must be visible without scrolling
   return (
-    <div className="min-h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 safe-area-inset">
-      {/* Header */}
-      <header className="flex-none px-4 py-2 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between max-w-2xl mx-auto">
+    <div className="h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 overflow-hidden">
+      {/* Compact Header */}
+      <header className="flex-none px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
+        <div className="flex items-center justify-between">
           <button
             onClick={() => setViewState('categories')}
-            className="text-sm text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 py-1"
+            className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
           >
             {t.backToCategories}
           </button>
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
             {pair?.progress.completed}/{pair?.progress.target}
           </span>
         </div>
-        <div className="h-1 bg-slate-200 dark:bg-slate-800 rounded-full mt-2 max-w-2xl mx-auto overflow-hidden">
+        <div className="h-0.5 bg-slate-200 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
           <div
             className="h-full bg-blue-600 rounded-full transition-all duration-300"
             style={{ width: `${pair?.progress.percentage || 0}%` }}
@@ -444,52 +444,53 @@ function VotingPageContent() {
         </div>
       </header>
 
-      {/* Prompt */}
-      <div className="flex-none text-center py-2 px-4">
-        <h1 className="text-base sm:text-lg font-semibold text-slate-900 dark:text-white leading-tight">
+      {/* Compact Prompt */}
+      <div className="flex-none text-center py-1.5 px-2">
+        <h1 className="text-sm font-semibold text-slate-900 dark:text-white">
           {study?.participantPrompt || t.selectImage}
         </h1>
-        <p className="text-xs text-slate-400 mt-1 hidden sm:block">{t.keyboardHint}</p>
+        <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
       </div>
 
-      {/* Main voting area */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
+      {/* Main voting area - fills remaining space */}
+      <main className="flex-1 min-h-0 flex items-center justify-center p-2 sm:p-3">
         {pair && leftItem && rightItem ? (
-          <div className="w-full max-w-4xl flex flex-col gap-3 sm:gap-4">
-            {/* Top image (Option A) */}
+          /* Side-by-side layout - images fill available space while maintaining aspect ratio */
+          <div className="w-full h-full flex flex-row gap-2 sm:gap-3 items-center justify-center">
+            {/* Left image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-100
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
-                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+              className={`relative flex-1 h-full max-h-full flex items-center justify-center bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl overflow-hidden shadow-sm transition-all duration-100
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg hover:ring-2 hover:ring-blue-400 cursor-pointer'}
+                focus:outline-none focus:ring-2 focus:ring-blue-500`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="w-full h-auto"
+                className="max-w-full max-h-full w-auto h-auto object-contain"
               />
-              <div className="absolute top-2 left-2 px-3 py-1 bg-black/60 text-white text-xs font-medium rounded-full">
+              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-2 py-0.5 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
                 A
               </div>
             </button>
 
-            {/* Bottom image (Option B) */}
+            {/* Right image (Option B) */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-900 rounded-xl sm:rounded-2xl overflow-hidden shadow-sm transition-all duration-100
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
-                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2`}
+              className={`relative flex-1 h-full max-h-full flex items-center justify-center bg-white dark:bg-slate-900 rounded-lg sm:rounded-xl overflow-hidden shadow-sm transition-all duration-100
+                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg hover:ring-2 hover:ring-blue-400 cursor-pointer'}
+                focus:outline-none focus:ring-2 focus:ring-blue-500`}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="w-full h-auto"
+                className="max-w-full max-h-full w-auto h-auto object-contain"
               />
-              <div className="absolute top-2 left-2 px-3 py-1 bg-black/60 text-white text-xs font-medium rounded-full">
+              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 px-2 py-0.5 sm:px-3 sm:py-1 bg-black/70 text-white text-xs font-bold rounded-full">
                 B
               </div>
             </button>
@@ -502,8 +503,8 @@ function VotingPageContent() {
       </main>
 
       {/* Mobile tap hint */}
-      <div className="flex-none text-center pb-2 sm:hidden">
-        <p className="text-xs text-slate-400">{t.tapToSelect}</p>
+      <div className="flex-none text-center py-1 sm:hidden">
+        <p className="text-[10px] text-slate-400">{t.tapToSelect}</p>
       </div>
     </div>
   );
