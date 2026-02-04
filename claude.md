@@ -8,43 +8,31 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 
 **Purpose**: Enable researchers, creators, and organizations to run blind comparison studies (images or text) with proper statistical ranking and fraud prevention.
 
-## Current Status: Early MVP (UI Scaffold)
+## Current Status: MVP Ready for Production
 
 ### What's Implemented
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Database Schema | Complete | 7 models in Prisma, production-ready |
-| Supabase Connection | Configured | PostgreSQL hosted on Supabase |
-| Landing Page | Complete | Hero section, navigation |
-| Admin Dashboard | UI Only | Stats cards, empty state, no data |
-| Create Study Form | UI Only | Full form with validation, submit disabled |
-| UI Components | Partial | Button component, theme system |
-| Prisma Client | Complete | Singleton with hot-reload safety |
+| Database Schema | Complete | Category, AccessCode, ELO tracking, audit trail |
+| Supabase Connection | Configured | PostgreSQL with schema deployed |
+| ELO Ranking System | Complete | Artist boost (+200 to +20), tie-breaking |
+| Matchmaking Algorithm | Complete | Position bias prevention, adaptive pair selection |
+| Access Code Auth | Complete | SHA256 hashing, single-use enforcement |
+| Voting API | Complete | Full audit trail, fraud detection |
+| Rankings API | Complete | Confidence indicators, position bias stats |
+| Participant UI | Complete | Slovenian translations, keyboard shortcuts |
+| Seed Script | Complete | IzVRS study with 128 images |
+| Logos | Complete | ScAIentist, IzVRS, Izvrstna logos |
 
-### What's NOT Implemented (Placeholder Only)
+### Pending
 
-- **API Routes** - No backend endpoints exist
-- **Authentication** - Keycloak configured in .env but not implemented
-- **Ranking Algorithms** - No Elo or Bradley-Terry logic
-- **Matchmaking** - No pair scheduling
-- **Image Processing** - No EXIF stripping or normalization
-- **Storage** - No S3/local abstraction
-- **Fraud Detection** - No timing analysis or pattern detection
-- **Participant Voting UI** - No voting interface
-- **CAPTCHA** - Turnstile keys configured but not integrated
-
-### Empty Directories (Planned Features)
-
-```
-src/lib/auth/         # Keycloak authentication
-src/lib/matchmaking/  # Bias-aware pair scheduler
-src/lib/ranking/      # Elo & Bradley-Terry engines
-src/lib/security/     # CAPTCHA, rate limiting, fraud detection
-src/lib/storage/      # Local/S3 storage abstraction
-src/components/admin/      # Admin UI components
-src/components/participant/ # Participant voting components
-```
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Image Upload to Supabase | Pending | Script ready, needs execution |
+| PDF Export | Planned | Methodology report generation |
+| Admin Dashboard | Partial | UI exists, needs data integration |
+| Vercel Deployment | Pending | Repo connected, needs env vars |
 
 ## Tech Stack
 
@@ -56,133 +44,148 @@ src/components/participant/ # Participant voting components
 | Styling | Tailwind CSS | 3.4.1 |
 | Components | shadcn/ui (Radix) | - |
 | Database | PostgreSQL (Supabase) | 16 |
+| Storage | Supabase Storage | - |
 | ORM | Prisma | 6.2.1 |
-| Auth | NextAuth v5 + Keycloak | 5.0.0-beta.25 |
-| Images | Sharp | 0.33.5 |
-| Charts | Recharts | 2.15.0 |
-| Forms | React Hook Form + Zod | 7.54.2 / 3.24.1 |
+| Auth | Custom Access Codes | SHA256 |
 
 ## Database Schema
 
 ### Core Models
 
 1. **Study** - Research study container
-   - `title`, `description`, `participantPrompt`
-   - `inputType`: IMAGE | TEXT
-   - `rankingMethod`: ELO | BRADLEY_TERRY
-   - Settings: `comparisonsPerParticipant`, `eloKFactor`, `targetTopN`
+   - Category support with `hasCategorySeparation`
+   - Access codes with `requireAccessCode`
+   - Localization with `language` field
+   - Branding with `logoUrls` array
 
-2. **Item** - Individual items being ranked
-   - `imageUrl`/`imageKey` (for images) or `text` (for text)
-   - `eloRating`, `btAbility` - Ranking scores
-   - Position bias tracking: `leftCount`, `rightCount`
+2. **Category** - Groups items (e.g., "3. razredi")
+   - `name`, `slug`, `displayOrder`
+   - Items filtered by category during voting
 
-3. **Session** - Participant session
-   - `token` (unique, resumable)
-   - `ipHash`, `userAgent` - Fingerprinting
-   - `captchaVerifiedAt` - Bot prevention
-   - Fraud flags: `isFlagged`, `flagReason`
+3. **AccessCode** - Single-use authentication
+   - `code` (plaintext), `codeHash` (SHA256)
+   - `usedAt`, `usedBySessionId` for tracking
 
-4. **Comparison** - Individual pairwise vote
-   - `itemAId`, `itemBId`, `winnerId`
-   - `leftItemId`, `rightItemId` - Position tracking
-   - `responseTimeMs` - For fraud detection
+4. **Item** - Images/text being ranked
+   - `artistRank` (1-10), `artistEloBoost` (+200 to +20)
+   - `eloRating` with real-time updates
+   - Position bias: `leftCount`, `rightCount`
 
-5. **SurveyResponse** - Optional post-voting survey
-6. **UsageMetrics** - Event tracking for analytics
+5. **Session** - Participant sessions
+   - Linked to AccessCode
+   - `categoryProgress` JSON for multi-category tracking
 
-## Environment Configuration
+6. **Comparison** - Individual votes (audit trail)
+   - Full position tracking (`leftItemId`, `rightItemId`)
+   - `responseTimeMs` for fraud detection
+   - `isFlagged`, `flagReason`
 
-**Database**: Supabase PostgreSQL
-```
-DATABASE_URL="postgresql://postgres:...@db.rdsozrebfjjoknqonvbk.supabase.co:5432/postgres"
-```
+## IzVRS Study Details
 
-**Authentication**: Keycloak (not yet implemented)
-- Configured in `.env` with placeholder values
-- NextAuth secret generated
+**Study ID**: `cml808mzc0000m104un333c69`
 
-**Storage**: Local (dev) or S3-compatible (prod)
-- MinIO available via Docker Compose for local S3 testing
+**Categories**:
+| Category | Items | Artist Ranked |
+|----------|-------|---------------|
+| 3. razredi | 49 | 20 (IDs: 1-49) |
+| 4. razredi | 29 | 20 (IDs: 50-78) |
+| 5. razredi | 50 | 19 (IDs: 79-128) |
 
-**Security**:
-- Cloudflare Turnstile test keys configured
-- IP salt generated for fingerprinting
+**Access Codes** (single-use):
+1. IzVRS-ocenjevalec90074
+2. IzVRS-ocenjevalec25793
+3. IzVRS-ocenjevalec85642
+4. IzVRS-ocenjevalec95696
+5. IzVRS-ocenjevalec86339
 
-## Development Commands
+**Artist ELO Boost**:
+- Rank 1 (10 pts): +200 ELO (starting at 1700)
+- Rank 2 (9 pts): +180 ELO
+- ...
+- Rank 10 (1 pt): +20 ELO
+- Unranked: Base 1500 ELO
 
-```bash
-# Install dependencies
-npm install
+**Tie-Breaking**: Artist rank wins if ELO is equal
 
-# Start dev server (Turbopack)
-npm run dev
+## API Routes
 
-# Database operations
-npm run db:generate  # Generate Prisma client
-npm run db:push      # Push schema to database
-npm run db:migrate   # Run migrations
-npm run db:seed      # Seed demo data
+### Participant APIs
 
-# Start local services (PostgreSQL + MinIO)
-docker compose up -d
-```
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/participate/[studyId]/auth` | POST | Validate access code, create session |
+| `/api/participate/[studyId]/next-pair` | GET | Get next comparison pair |
+| `/api/participate/[studyId]/vote` | POST | Submit vote, update ELO |
+
+### Admin APIs
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/studies/[studyId]` | GET | Get study details |
+| `/api/studies/[studyId]/rankings` | GET | Get current rankings |
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
 | `prisma/schema.prisma` | Complete database schema |
-| `src/lib/db.ts` | Prisma client singleton |
-| `src/app/page.tsx` | Landing page |
-| `src/app/admin/page.tsx` | Admin dashboard (empty state) |
-| `src/app/admin/studies/new/page.tsx` | Create study form |
-| `.env` | Environment configuration (gitignored) |
-| `docker-compose.yml` | Local PostgreSQL + MinIO |
+| `prisma/seed.ts` | IzVRS study seeding |
+| `src/lib/ranking/elo.ts` | ELO calculation + artist boost |
+| `src/lib/matchmaking/index.ts` | Pair selection algorithm |
+| `src/lib/auth/hash.ts` | Access code hashing |
+| `src/app/study/[studyId]/page.tsx` | Entry page (code input) |
+| `src/app/study/[studyId]/vote/page.tsx` | Voting interface |
+| `scripts/upload-to-supabase.ts` | Image upload script |
 
-## Next Steps (Priority Order)
+## Deployment
 
-1. **Database Migration** - Run `npm run db:push` to sync schema with Supabase
-2. **API Routes** - Implement study CRUD endpoints
-3. **Authentication** - Set up Keycloak or switch to Supabase Auth
-4. **Participant Voting** - Build the core voting UI
-5. **Ranking Algorithms** - Implement Elo and Bradley-Terry
-6. **Image Processing** - EXIF stripping, normalization pipeline
-7. **Fraud Detection** - Response time analysis, pattern detection
+### Vercel Environment Variables
 
-## Architecture Decisions
+```
+DATABASE_URL=postgresql://postgres:Sc%2EAI%2Eentist%2198@db.rdsozrebfjjoknqonvbk.supabase.co:5432/postgres?pgbouncer=true
+NEXTAUTH_SECRET=e5c5tUa1IQFMMbDor8QibeJuX4ufd9wABrUtjaPYzm8
+NEXTAUTH_URL=https://blind.scaientist.eu
+NEXT_PUBLIC_APP_URL=https://blind.scaientist.eu
+IP_SALT=d34945fe5fe5387f8f5e074597037676dbd2df398d5507021ee52331c41c4d17
+```
 
-### Why Supabase?
-- Managed PostgreSQL with built-in connection pooling
-- Could leverage Supabase Auth (simpler than Keycloak)
-- S3-compatible storage available
-- Free tier sufficient for development
+### Domain Setup
 
-### Why Dual Ranking (Elo + Bradley-Terry)?
-- **Elo**: Fast, real-time updates, good for live monitoring
-- **Bradley-Terry**: Statistically rigorous, proper confidence intervals, better for final analysis
+Domain: `blind.scaientist.eu`
+DNS: CNAME → cname.vercel-dns.com
 
-### Position Bias Prevention
-- Database tracks `leftItemId`/`rightItemId` separately from `itemAId`/`itemBId`
-- Allows verification of 50/50 random positioning
-- Can detect if certain items are shown more on one side
+### Image Storage
 
-## Security Model
+Images stored in Supabase Storage bucket `izvrs-images`.
+Upload with: `SUPABASE_ANON_KEY=xxx npx tsx scripts/upload-to-supabase.ts`
 
-SciBLIND prevents:
-- Metadata leakage (UUIDs, no predictable URLs)
-- Direct image URL exposure (proxy serving)
-- EXIF metadata attacks (stripping)
-- Bot attacks (CAPTCHA + rate limiting)
-- Position bias (randomization + tracking)
-- Vote spam (multi-layer rate limiting)
-- Fast bot voting (<500ms flagged)
+## Security Features
 
-SciBLIND mitigates (harder but not impossible):
-- Image fingerprinting attacks
-- Coordinated human manipulation
-- Advanced ML-based bots
+- Access codes hashed with SHA256
+- Single-use enforcement at database level
+- IP fingerprinting (salted hash)
+- Response time fraud detection (<500ms flagged)
+- Position bias tracking (50/50 verification)
+- No rankings shown to participants
 
-## Inspiration
+## Development Commands
 
-Based on analysis of MKBHD's Blind Smartphone Camera Test methodology by Abrar Ul Haq, identifying security vulnerabilities that SciBLIND addresses. Reference PDF included in project root.
+```bash
+npm run dev              # Start dev server
+npm run db:push          # Push schema to database
+npm run db:seed          # Seed IzVRS study
+npx tsx scripts/upload-to-supabase.ts  # Upload images
+```
+
+## Participant URL
+
+`https://blind.scaientist.eu/study/cml808mzc0000m104un333c69`
+
+## Next Steps
+
+1. ✅ Upload images to Supabase Storage
+2. ✅ Deploy to Vercel
+3. Configure domain DNS
+4. Test full voting flow
+5. Implement PDF export
+6. Add admin dashboard data integration
