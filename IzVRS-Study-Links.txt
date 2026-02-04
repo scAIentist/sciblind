@@ -1,0 +1,39 @@
+===============================================
+IzVRS Likovni natečaj 2025 - Study Information
+===============================================
+
+STUDY ID: cml808mzc0000m104un333c69
+
+LINKS
+-----
+Participant Voting:  https://blind.scaientist.eu/study/cml808mzc0000m104un333c69
+Admin Dashboard:     https://blind.scaientist.eu/admin
+Study Details:       https://blind.scaientist.eu/admin/studies/cml808mzc0000m104un333c69
+Rankings JSON:       https://blind.scaientist.eu/api/studies/cml808mzc0000m104un333c69/rankings
+
+ACCESS CODES
+------------
+TEST CODE (unlimited uses, no ELO impact):
+  IzVRS-TEST-MODE
+
+REVIEWER CODES (single-use each):
+  1. IzVRS-ocenjevalec90074
+  2. IzVRS-ocenjevalec25793
+  3. IzVRS-ocenjevalec85642
+  4. IzVRS-ocenjevalec95696
+  5. IzVRS-ocenjevalec86339
+
+CATEGORIES
+----------
+- 3. razredi: 49 images
+- 4. razredi: 29 images
+- 5. razredi: 50 images
+Total: 128 images
+
+NOTES
+-----
+- Test code can be used unlimited times for testing
+- Test sessions do NOT affect ELO ratings or statistics
+- Reviewer codes are single-use only
+- Each reviewer must complete all 3 categories
+- Goal: Select top 4 from each category
