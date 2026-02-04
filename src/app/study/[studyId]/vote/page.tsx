@@ -46,7 +46,7 @@ const translations = {
     of: 'od',
     comparisons: 'primerjav',
     tapToSelect: 'Tapnite sliko za izbiro',
-    keyboardHint: 'Tipki A/L ali puščici',
+    keyboardHint: 'Tipki A/B ali puščici ↑/↓',
     error: 'Prišlo je do napake. Poskusite znova.',
     backToCategories: '← Kategorije',
     finishStudy: 'Zaključi',
@@ -63,7 +63,7 @@ const translations = {
     of: 'of',
     comparisons: 'comparisons',
     tapToSelect: 'Tap an image to select',
-    keyboardHint: 'Keys A/L or arrows',
+    keyboardHint: 'Keys A/B or arrows ↑/↓',
     error: 'An error occurred. Please try again.',
     backToCategories: '← Categories',
     finishStudy: 'Finish',
@@ -173,10 +173,12 @@ function VotingPageContent() {
       if (voteInProgressRef.current) return;
 
       const key = e.key.toLowerCase();
-      if (key === 'a' || key === 'arrowleft') {
+      // A or Up arrow = top image (Option A)
+      if (key === 'a' || key === 'arrowup') {
         e.preventDefault();
         handleVote(pair!.leftItemId);
-      } else if (key === 'l' || key === 'arrowright') {
+      // B or Down arrow = bottom image (Option B)
+      } else if (key === 'b' || key === 'arrowdown') {
         e.preventDefault();
         handleVote(pair!.rightItemId);
       }
@@ -453,8 +455,8 @@ function VotingPageContent() {
       {/* Main voting area */}
       <main className="flex-1 flex items-center justify-center p-2 sm:p-4 overflow-auto">
         {pair && leftItem && rightItem ? (
-          <div className="w-full max-w-5xl grid grid-cols-2 gap-2 sm:gap-4 items-start">
-            {/* Left image */}
+          <div className="w-full max-w-4xl flex flex-col gap-3 sm:gap-4">
+            {/* Top image (Option A) */}
             <button
               onClick={() => handleVote(pair.leftItemId)}
               disabled={isVoting}
@@ -466,15 +468,14 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
-                className="w-full h-auto object-contain"
-                style={{ maxHeight: 'calc(100vh - 180px)' }}
+                className="w-full h-auto"
               />
-              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
+              <div className="absolute top-2 left-2 px-3 py-1 bg-black/60 text-white text-xs font-medium rounded-full">
                 A
               </div>
             </button>
 
-            {/* Right image */}
+            {/* Bottom image (Option B) */}
             <button
               onClick={() => handleVote(pair.rightItemId)}
               disabled={isVoting}
@@ -486,11 +487,10 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
-                className="w-full h-auto object-contain"
-                style={{ maxHeight: 'calc(100vh - 180px)' }}
+                className="w-full h-auto"
               />
-              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 px-3 py-1 bg-black/60 text-white text-xs rounded-full opacity-0 sm:opacity-60 pointer-events-none">
-                L
+              <div className="absolute top-2 left-2 px-3 py-1 bg-black/60 text-white text-xs font-medium rounded-full">
+                B
               </div>
             </button>
           </div>
