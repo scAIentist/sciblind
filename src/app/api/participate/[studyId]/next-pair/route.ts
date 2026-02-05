@@ -13,9 +13,23 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { selectNextPair, calculateRecommendedComparisons, getCategoryProgress } from '@/lib/matchmaking';
+import { selectNextPair, calculateRecommendedComparisons, getCategoryProgress, hasFullCoverage } from '@/lib/matchmaking';
+import { isPublishableThreshold } from '@/lib/ranking/statistics';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
+
+/**
+ * Get items that have NOT yet appeared in any session comparison.
+ * Used for progress bar calculation when coverage is not yet achieved.
+ */
+function getUnseenItems(items: { id: string }[], sessionComparisons: { itemAId: string; itemBId: string }[]) {
+  const seen = new Set<string>();
+  for (const comp of sessionComparisons) {
+    seen.add(comp.itemAId);
+    seen.add(comp.itemBId);
+  }
+  return items.filter((item) => !seen.has(item.id));
+}
 
 export async function GET(
   request: NextRequest,
@@ -132,19 +146,25 @@ export async function GET(
         // Return category list for selection
         const categoryProgress = await Promise.all(
           study.categories.map(async (cat) => {
-            const itemCount = await prisma.item.count({
+            const catItems = await prisma.item.findMany({
               where: { studyId, categoryId: cat.id },
             });
-            const targetComparisons = calculateRecommendedComparisons(itemCount, 5);
+            const targetComparisons = calculateRecommendedComparisons(catItems.length, 5);
+            const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
             const progress = getCategoryProgress(session.comparisons, cat.id, targetComparisons);
+            const catCoverage = hasFullCoverage(catItems, catComparisons);
+
+            // Override isComplete: require both target AND coverage
+            const isComplete = progress.completed >= targetComparisons && catCoverage;
 
             return {
               id: cat.id,
               name: cat.name,
               slug: cat.slug,
               displayOrder: cat.displayOrder,
-              itemCount,
+              itemCount: catItems.length,
               ...progress,
+              isComplete,
             };
           })
         );
@@ -184,8 +204,15 @@ export async function GET(
     // Calculate target comparisons
     const targetComparisons = calculateRecommendedComparisons(items.length, 5);
 
-    // Check if category is complete
-    if (sessionComparisons.length >= targetComparisons) {
+    // Check full coverage: every item must have been shown at least once
+    const coverageAchieved = hasFullCoverage(items, sessionComparisons);
+
+    // Category is complete ONLY if BOTH conditions are met:
+    // 1. Reached target number of comparisons
+    // 2. Every item in the category has been shown at least once (full coverage)
+    const categoryIsComplete = sessionComparisons.length >= targetComparisons && coverageAchieved;
+
+    if (categoryIsComplete) {
       // Update session progress
       const progress = (session.categoryProgress as Record<string, number>) || {};
       if (targetCategoryId) {
@@ -197,16 +224,41 @@ export async function GET(
         data: { categoryProgress: progress },
       });
 
+      // Check global publishable threshold for this category
+      const allStudyComparisons = await prisma.comparison.findMany({
+        where: {
+          studyId,
+          ...(targetCategoryId ? { categoryId: targetCategoryId } : {}),
+        },
+        select: {
+          winnerId: true,
+          itemAId: true,
+          itemBId: true,
+          isFlagged: true,
+          flagReason: true,
+        },
+      });
+
+      const thresholdResult = isPublishableThreshold(
+        items.map((i) => ({ id: i.id, comparisonCount: i.comparisonCount })),
+        allStudyComparisons,
+        {
+          minExposuresPerItem: study.minExposuresPerItem,
+          minTotalComparisons: study.minTotalComparisons,
+        },
+      );
+
       // Check if all categories are complete
       if (study.hasCategorySeparation) {
         const allComplete = await Promise.all(
           study.categories.map(async (cat) => {
-            const catItemCount = await prisma.item.count({
+            const catItems = await prisma.item.findMany({
               where: { studyId, categoryId: cat.id },
             });
-            const catTarget = calculateRecommendedComparisons(catItemCount, 5);
+            const catTarget = calculateRecommendedComparisons(catItems.length, 5);
             const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
-            return catComparisons.length >= catTarget;
+            const catCoverage = hasFullCoverage(catItems, catComparisons);
+            return catComparisons.length >= catTarget && catCoverage;
           })
         );
 
@@ -220,6 +272,8 @@ export async function GET(
             {
               complete: true,
               allCategoriesComplete: true,
+              thresholdMet: thresholdResult.isPublishable,
+              dataStatus: thresholdResult.dataStatus,
             },
             { headers: rateLimitHeaders }
           );
@@ -232,6 +286,9 @@ export async function GET(
           categoryId: targetCategoryId,
           comparisonsInCategory: sessionComparisons.length,
           targetComparisons,
+          thresholdMet: thresholdResult.isPublishable,
+          dataStatus: thresholdResult.dataStatus,
+          allowContinuedVoting: study.allowContinuedVoting && !thresholdResult.isPublishable,
         },
         { headers: rateLimitHeaders }
       );
@@ -251,6 +308,13 @@ export async function GET(
         { headers: rateLimitHeaders }
       );
     }
+
+    // If we've passed the target but still don't have coverage, extend the
+    // displayed target so the progress bar doesn't show >100% confusingly.
+    // The effective target is the higher of: target comparisons OR current + remaining for coverage.
+    const effectiveTarget = !coverageAchieved && sessionComparisons.length >= targetComparisons
+      ? sessionComparisons.length + Math.ceil(getUnseenItems(items, sessionComparisons).length / 2) + 1
+      : targetComparisons;
 
     // Return pair info without revealing internal identifiers unnecessarily
     return NextResponse.json(
@@ -272,8 +336,8 @@ export async function GET(
         categoryId: targetCategoryId,
         progress: {
           completed: sessionComparisons.length,
-          target: targetComparisons,
-          percentage: Math.round((sessionComparisons.length / targetComparisons) * 100),
+          target: effectiveTarget,
+          percentage: Math.min(99, Math.round((sessionComparisons.length / effectiveTarget) * 100)),
         },
       },
       { headers: rateLimitHeaders }

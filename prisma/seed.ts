@@ -201,7 +201,7 @@ Izbira primerov je sledila algoritmu, ki zagotavlja enakomernost in preprečuje 
           categoryId: category.id,
           externalId: String(id),
           label: `Slika ${id}`,
-          imageKey: `izvrs/${catConfig.slug}/${id}.png`,
+          imageKey: `izvrs/${catConfig.slug}/${id}.webp`,
           artistRank,
           artistEloBoost: artistBoost,
           eloRating: initialElo,

@@ -53,6 +53,10 @@ const translations = {
     thankYou: 'Hvala!',
     resultsHidden: 'Rezultati bodo objavljeni po zaključku študije.',
     tryAgain: 'Poskusi znova',
+    thresholdSufficient: 'Rezultati so dovolj zanesljivi. Lahko nadaljujete za boljšo natančnost ali preidete na naslednjo kategorijo.',
+    thresholdInsufficient: 'Vaše primerjave so zelo pomembne za zanesljivost rezultatov. Nadaljujte za boljšo natančnost.',
+    continueVoting: 'Nadaljuj primerjanje',
+    nextCategory: 'Naslednja kategorija',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -70,6 +74,10 @@ const translations = {
     thankYou: 'Thank you!',
     resultsHidden: 'Results will be published after the study ends.',
     tryAgain: 'Try again',
+    thresholdSufficient: 'Results are sufficiently reliable. You may continue for improved accuracy or proceed to the next category.',
+    thresholdInsufficient: 'Your comparisons are valuable for result reliability. Continue for improved accuracy.',
+    continueVoting: 'Continue comparing',
+    nextCategory: 'Next category',
   },
 };
 
@@ -91,7 +99,12 @@ function VotingPageContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'complete'>('loading');
+  const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'categoryDone' | 'complete'>('loading');
+  const [categoryDoneInfo, setCategoryDoneInfo] = useState<{
+    categoryId: string;
+    thresholdMet: boolean;
+    allowContinuedVoting: boolean;
+  } | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Mark as hydrated on mount
@@ -127,7 +140,7 @@ function VotingPageContent() {
       }
     }
     if (item.imageUrl) return item.imageUrl;
-    return '/placeholder.png';
+    return '/placeholder.webp';
   }, []);
 
   // Fetch study on mount - wait for hydration to check token
@@ -219,6 +232,19 @@ function VotingPageContent() {
       }
 
       if (data.categoryComplete) {
+        // Show threshold-aware category completion screen
+        if (data.allowContinuedVoting) {
+          setCategoryDoneInfo({
+            categoryId: data.categoryId,
+            thresholdMet: data.thresholdMet || false,
+            allowContinuedVoting: true,
+          });
+          setViewState('categoryDone');
+          setIsLoading(false);
+          return;
+        }
+
+        // Category is done — go back to category selection
         const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`, { signal });
         const catData = await catRes.json();
         if (catData.requiresCategorySelection) {
@@ -414,6 +440,61 @@ function VotingPageContent() {
               </button>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // Category done with threshold messaging
+  if (viewState === 'categoryDone' && categoryDoneInfo) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-6">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-5">
+            <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">
+            {t.categoryComplete}
+          </h2>
+          <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+            {categoryDoneInfo.thresholdMet ? t.thresholdSufficient : t.thresholdInsufficient}
+          </p>
+          <div className="space-y-3">
+            {categoryDoneInfo.allowContinuedVoting && (
+              <button
+                onClick={() => {
+                  setCategoryDoneInfo(null);
+                  setIsLoading(true);
+                  fetchNextPair(categoryDoneInfo.categoryId);
+                }}
+                className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold active:scale-95 transition-transform"
+              >
+                {t.continueVoting}
+              </button>
+            )}
+            <button
+              onClick={async () => {
+                setCategoryDoneInfo(null);
+                setIsLoading(true);
+                const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
+                const catData = await catRes.json();
+                if (catData.requiresCategorySelection) {
+                  setCategories(catData.categories);
+                }
+                setViewState('categories');
+                setIsLoading(false);
+              }}
+              className={`w-full px-6 py-3 rounded-xl font-semibold active:scale-95 transition-transform ${
+                categoryDoneInfo.allowContinuedVoting
+                  ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                  : 'bg-green-600 text-white shadow-lg shadow-green-600/25'
+              }`}
+            >
+              {t.nextCategory}
+            </button>
+          </div>
         </div>
       </div>
     );

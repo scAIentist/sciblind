@@ -53,7 +53,7 @@ async function main() {
       continue;
     }
 
-    const files = fs.readdirSync(localPath).filter((f) => f.endsWith('.png'));
+    const files = fs.readdirSync(localPath).filter((f) => f.endsWith('.webp') || f.endsWith('.png'));
     console.log(`📁 Uploading ${files.length} images from ${category.slug}...`);
 
     for (const file of files) {
@@ -63,10 +63,11 @@ async function main() {
 
       process.stdout.write(`   Uploading ${file}...`);
 
+      const contentType = file.endsWith('.webp') ? 'image/webp' : 'image/png';
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
         .upload(storagePath, fileBuffer, {
-          contentType: 'image/png',
+          contentType,
           upsert: true,
         });
 
@@ -85,7 +86,7 @@ async function main() {
       totalUploaded++;
 
       // Store URL for later database update
-      const externalId = file.replace('.png', '');
+      const externalId = file.replace(/\.(webp|png)$/, '');
       console.log(`      URL: ${urlData.publicUrl}`);
     }
   }
@@ -97,7 +98,7 @@ async function main() {
   console.log('='.repeat(50));
 
   // Show sample URL format
-  console.log(`\n📸 Image URL format: https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images/{category}/{id}.png`);
+  console.log(`\n📸 Image URL format: https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images/{category}/{id}.webp`);
 }
 
 main()

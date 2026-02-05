@@ -26,6 +26,12 @@ model Study {
   eloKFactor                Float         @default(32.0)
   eloInitialRating          Float         @default(1500.0)
 
+  // Scientific thresholds
+  minExposuresPerItem       Int           @default(10)   // Min comparisons per item for publishable results
+  minTotalComparisons       Int?                         // Override: min total comparisons (default: 10 × itemCount)
+  adaptiveKFactor           Boolean       @default(false) // K decreases as items get more games
+  allowContinuedVoting      Boolean       @default(true)  // Allow voting after threshold met
+
   // Category support
   hasCategorySeparation     Boolean       @default(false) // Items don't mix between categories
   categories                Category[]
@@ -217,6 +223,9 @@ model Comparison {
   // Fraud detection
   isFlagged      Boolean   @default(false)
   flagReason     String?   // "too_fast", "pattern", "duplicate_pair", etc.
+
+  // Algorithm versioning
+  algoVersion    String    @default("sciblind-v2")
 
   @@index([studyId])
   @@index([sessionId])

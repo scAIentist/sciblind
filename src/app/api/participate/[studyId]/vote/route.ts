@@ -19,7 +19,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { calculateEloChange } from '@/lib/ranking/elo';
+import { calculateEloChange, calculateAdaptiveK } from '@/lib/ranking/elo';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { validateVoteRequest, isValidCuid } from '@/lib/security/validation';
 
@@ -206,16 +206,22 @@ export async function POST(
           responseTimeMs: responseTimeMs ?? null,
           isFlagged: isTestSession ? true : isFlagged, // Always flag test comparisons
           flagReason: isTestSession ? 'test_session' : flagReason,
+          algoVersion: 'sciblind-v2',
         },
       });
 
       // ONLY update ELO and item stats for NON-test sessions
       if (!isTestSession) {
+        // Calculate effective K-factor (adaptive or fixed)
+        const effectiveK = session.study.adaptiveKFactor
+          ? calculateAdaptiveK(session.study.eloKFactor, winner.eloGames, loser.eloGames)
+          : session.study.eloKFactor;
+
         // Calculate ELO changes
         const eloResult = calculateEloChange(
           winner.eloRating,
           loser.eloRating,
-          session.study.eloKFactor
+          effectiveK
         );
 
         // Update winner stats

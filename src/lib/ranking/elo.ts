@@ -71,6 +71,32 @@ export function pointsToRank(points: number): number {
 }
 
 /**
+ * Calculate adaptive K-factor that decreases as items get more games.
+ *
+ * When items are new (few games), K is higher for faster convergence.
+ * As items accumulate games, K decreases for more stable ratings.
+ *
+ * Formula: effectiveK = baseK × max(1, 32 / max(1, min(gamesA, gamesB)))
+ * - At 1 game: effectiveK = baseK × 32 = 1024 (with default K=32)
+ * - At 32 games: effectiveK = baseK × 1 = 32
+ * - At 100+ games: effectiveK = baseK × 1 = 32
+ *
+ * @param baseK - Base K-factor from study settings
+ * @param gamesA - Number of games played by item A
+ * @param gamesB - Number of games played by item B
+ * @returns Adaptive K-factor
+ */
+export function calculateAdaptiveK(
+  baseK: number,
+  gamesA: number,
+  gamesB: number,
+): number {
+  const minGames = Math.max(1, Math.min(gamesA, gamesB));
+  const multiplier = Math.max(1, 32 / minGames);
+  return baseK * multiplier;
+}
+
+/**
  * Item interface for ranking comparison
  */
 export interface RankableItem {
