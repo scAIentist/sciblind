@@ -22,6 +22,7 @@ import { prisma } from '@/lib/db';
 import { hashAccessCode, hashIP, generateSessionToken } from '@/lib/auth/hash';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { validateAuthRequest, getClientIP, isValidCuid } from '@/lib/security/validation';
+import { logActivity } from '@/lib/logging';
 
 export async function POST(
   request: NextRequest,
@@ -36,6 +37,11 @@ export async function POST(
   const rateLimitHeaders = getRateLimitHeaders(rateLimit);
 
   if (!rateLimit.success) {
+    logActivity('AUTH_RATE_LIMITED', {
+      ipHash,
+      userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
+      detail: 'Auth rate limit triggered',
+    });
     return NextResponse.json(
       {
         error: 'Too many authentication attempts. Please try again later.',
@@ -141,6 +147,12 @@ export async function POST(
     });
 
     if (!accessCode) {
+      logActivity('AUTH_FAILURE', {
+        studyId,
+        ipHash,
+        userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
+        detail: 'Invalid access code attempt',
+      });
       // Use generic error to prevent enumeration
       return NextResponse.json(
         { error: 'Invalid access code', errorKey: 'INVALID_CODE' },
@@ -177,6 +189,15 @@ export async function POST(
         },
       });
 
+      logActivity('SESSION_CREATED', {
+        studyId,
+        sessionId: session.id,
+        ipHash,
+        userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
+        detail: `[TEST] Test session created (code: ${accessCode.label})`,
+        metadata: { codeLabel: accessCode.label, isTestSession: true },
+      });
+
       return NextResponse.json(
         {
           success: true,
@@ -198,6 +219,12 @@ export async function POST(
         });
 
         if (existingSession) {
+          logActivity('SESSION_RESUMED', {
+            studyId,
+            sessionId: existingSession.id,
+            ipHash,
+            detail: `Session resumed (code: ${accessCode.label})`,
+          });
           return NextResponse.json(
             {
               success: true,
@@ -237,6 +264,22 @@ export async function POST(
         usedAt: new Date(),
         usedBySessionId: session.id,
       },
+    });
+
+    logActivity('SESSION_CREATED', {
+      studyId,
+      sessionId: session.id,
+      ipHash,
+      userAgent: request.headers.get('user-agent')?.slice(0, 500) || undefined,
+      detail: `Reviewer session created (code: ${accessCode.label})`,
+      metadata: { codeLabel: accessCode.label, isTestSession: false },
+    });
+
+    logActivity('AUTH_SUCCESS', {
+      studyId,
+      sessionId: session.id,
+      ipHash,
+      detail: `Access code used: ${accessCode.label}`,
     });
 
     return NextResponse.json(

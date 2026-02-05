@@ -20,6 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { logActivity } from '@/lib/logging';
 
 const ALGO_VERSION = 'sciblind-v2';
 
@@ -190,6 +191,12 @@ export async function GET(
         includesTestData: includeTest,
       },
     };
+
+    logActivity('EXPORT_DOWNLOADED', {
+      studyId,
+      detail: `Export downloaded (${comparisons.length} comparisons, ${sessions.length} sessions)`,
+      metadata: { categoryId: categoryId || null, includeTest },
+    });
 
     // Set content-disposition for download
     const filename = `sciblind-export-${study.id}-${new Date().toISOString().split('T')[0]}.json`;

@@ -22,6 +22,7 @@ import { prisma } from '@/lib/db';
 import { calculateEloChange, calculateAdaptiveK } from '@/lib/ranking/elo';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { validateVoteRequest, isValidCuid } from '@/lib/security/validation';
+import { logActivity } from '@/lib/logging';
 
 // Minimum response time in ms (faster is flagged as suspicious)
 const MIN_RESPONSE_TIME_MS = 500;
@@ -284,6 +285,27 @@ export async function POST(
       });
 
       return comparison;
+    });
+
+    // Log the vote (fire-and-forget, non-blocking)
+    logActivity(isFlagged || isTestSession ? 'VOTE_FLAGGED' : 'VOTE_CAST', {
+      studyId,
+      sessionId: session.id,
+      detail: `${isTestSession ? '[TEST] ' : ''}Vote: ${winnerId === itemAId ? 'A' : 'B'} won (${responseTimeMs ?? '?'}ms)`,
+      metadata: {
+        comparisonId: result.id,
+        itemAId,
+        itemBId,
+        winnerId,
+        leftItemId,
+        rightItemId,
+        categoryId: categoryId || itemA.categoryId,
+        responseTimeMs,
+        isFlagged,
+        flagReason: isTestSession ? 'test_session' : flagReason,
+        isTestSession,
+        sessionComparisonCount: session.comparisonCount + 1,
+      },
     });
 
     return NextResponse.json(

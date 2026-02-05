@@ -16,6 +16,7 @@ import { prisma } from '@/lib/db';
 import { selectNextPair, calculateRecommendedComparisons, getCategoryProgress, hasFullCoverage } from '@/lib/matchmaking';
 import { isPublishableThreshold } from '@/lib/ranking/statistics';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
+import { logActivity } from '@/lib/logging';
 import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
 
 /**
@@ -268,6 +269,13 @@ export async function GET(
             data: { isCompleted: true },
           });
 
+          logActivity('SESSION_COMPLETED', {
+            studyId,
+            sessionId: session.id,
+            detail: `Session completed all categories (${session.comparisonCount} total comparisons)`,
+            metadata: { thresholdMet: thresholdResult.isPublishable, dataStatus: thresholdResult.dataStatus },
+          });
+
           return NextResponse.json(
             {
               complete: true,
@@ -279,6 +287,13 @@ export async function GET(
           );
         }
       }
+
+      logActivity('CATEGORY_COMPLETED', {
+        studyId,
+        sessionId: session.id,
+        detail: `Category completed (${sessionComparisons.length}/${targetComparisons} comparisons)`,
+        metadata: { categoryId: targetCategoryId, comparisons: sessionComparisons.length, target: targetComparisons, thresholdMet: thresholdResult.isPublishable },
+      });
 
       return NextResponse.json(
         {

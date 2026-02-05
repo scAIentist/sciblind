@@ -279,3 +279,64 @@ enum UsageEventType {
   IMAGE_UPLOAD
   TEXT_ITEM
 }
+
+// ========== Activity Logging ==========
+
+/// Comprehensive audit log for all portal activity.
+/// Immutable append-only log — records are never updated or deleted.
+model ActivityLog {
+  id        String         @id @default(cuid())
+  createdAt DateTime       @default(now())
+
+  // What happened
+  action    ActivityAction
+  detail    String?        // Human-readable description
+
+  // Context
+  studyId   String?        // Which study (if applicable)
+  sessionId String?        // Which participant session (if applicable)
+  userId    String?        // Which admin user (if applicable)
+
+  // Request metadata
+  ipHash    String?        // Hashed IP for security (not raw IP)
+  userAgent String?        // Browser user agent
+
+  // Structured metadata (JSON) for machine-readable details
+  metadata  Json?          // e.g. { "itemAId": "...", "winnerId": "...", "responseTimeMs": 1234 }
+
+  @@index([studyId])
+  @@index([sessionId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+enum ActivityAction {
+  // Session lifecycle
+  SESSION_CREATED        // New session started (test or real)
+  SESSION_COMPLETED      // Session finished all categories
+  SESSION_RESUMED        // Existing session resumed with same code
+
+  // Voting
+  VOTE_CAST              // A comparison vote was submitted
+  VOTE_FLAGGED           // A vote was flagged (too fast, too slow, test)
+
+  // Category
+  CATEGORY_SELECTED      // Participant chose a category to vote on
+  CATEGORY_COMPLETED     // Participant completed a category
+
+  // Authentication
+  AUTH_SUCCESS            // Successful access code authentication
+  AUTH_FAILURE            // Failed authentication attempt
+  AUTH_RATE_LIMITED       // Rate limit triggered on auth
+
+  // Admin actions
+  STUDY_CREATED          // New study created
+  STUDY_UPDATED          // Study settings changed
+  ITEMS_UPLOADED         // Items uploaded to a study
+  RANKINGS_VIEWED        // Rankings page accessed
+  EXPORT_DOWNLOADED      // Data export downloaded
+
+  // System
+  ELO_RESET              // ELO ratings were reset
+  SCHEMA_MIGRATED        // Database schema changed
+}

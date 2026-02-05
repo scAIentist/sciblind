@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 
 interface CategoryStat {
@@ -45,6 +45,17 @@ interface StudyStat {
   recentActivity: number;
 }
 
+interface ActivityLogEntry {
+  id: string;
+  createdAt: string;
+  action: string;
+  detail: string | null;
+  studyId: string | null;
+  sessionId: string | null;
+  ipHash: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
 interface DashboardData {
   globalStats: {
     totalStudies: number;
@@ -62,6 +73,24 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedStudy, setExpandedStudy] = useState<string | null>(null);
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
+
+  const fetchLogs = useCallback(async () => {
+    setLogsLoading(true);
+    try {
+      const res = await fetch('/api/admin/activity-log?limit=50');
+      if (res.ok) {
+        const json = await res.json();
+        setActivityLogs(json.logs || []);
+      }
+    } catch {
+      // Non-critical — silently fail
+    } finally {
+      setLogsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     async function fetchData() {
@@ -178,6 +207,95 @@ export default function AdminDashboard() {
                 onToggle={() => setExpandedStudy(expandedStudy === study.id ? null : study.id)}
               />
             ))
+          )}
+        </div>
+
+        {/* Activity Log Section */}
+        <div className="mt-8 pt-8 border-t">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-2xl font-semibold">Activity Log</h2>
+            <button
+              onClick={() => {
+                if (!showLogs) fetchLogs();
+                setShowLogs(!showLogs);
+              }}
+              className="px-4 py-2 border rounded-lg text-sm hover:bg-accent transition-colors"
+            >
+              {showLogs ? 'Hide Logs' : 'Show Logs'}
+            </button>
+          </div>
+
+          {showLogs && (
+            <div className="border rounded-lg overflow-hidden">
+              {logsLoading ? (
+                <div className="p-8 text-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2"></div>
+                  <p className="text-sm text-muted-foreground">Loading logs...</p>
+                </div>
+              ) : activityLogs.length === 0 ? (
+                <div className="p-8 text-center text-muted-foreground">
+                  No activity logs yet
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="text-left p-3 font-medium text-muted-foreground">Time</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">Action</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">Detail</th>
+                        <th className="text-left p-3 font-medium text-muted-foreground">Session</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {activityLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-accent/30">
+                          <td className="p-3 whitespace-nowrap text-xs text-muted-foreground">
+                            {new Date(log.createdAt).toLocaleString('sl-SI', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              second: '2-digit',
+                            })}
+                          </td>
+                          <td className="p-3">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                              log.action.includes('FAIL') || log.action.includes('RATE_LIMITED')
+                                ? 'bg-red-100 text-red-700'
+                                : log.action.includes('FLAGGED')
+                                  ? 'bg-yellow-100 text-yellow-700'
+                                  : log.action.includes('COMPLETED')
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {log.action.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="p-3 text-xs max-w-md truncate">{log.detail || '—'}</td>
+                          <td className="p-3 text-xs text-muted-foreground font-mono">
+                            {log.sessionId ? log.sessionId.slice(-8) : '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {activityLogs.length > 0 && (
+                <div className="p-3 border-t bg-muted/30 flex justify-between items-center">
+                  <span className="text-xs text-muted-foreground">
+                    Showing last {activityLogs.length} entries
+                  </span>
+                  <button
+                    onClick={fetchLogs}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Refresh
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
 

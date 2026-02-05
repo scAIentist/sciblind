@@ -16,6 +16,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Preconnect to Supabase storage for faster image loading */}
+        <link rel="preconnect" href="https://rdsozrebfjjoknqonvbk.supabase.co" />
+        <link rel="dns-prefetch" href="https://rdsozrebfjjoknqonvbk.supabase.co" />
+      </head>
       <body className={inter.className}>{children}</body>
     </html>
   );

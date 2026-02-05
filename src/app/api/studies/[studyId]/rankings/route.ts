@@ -23,6 +23,7 @@ import { prisma } from '@/lib/db';
 import { compareItemsForRanking, getConfidenceLevel } from '@/lib/ranking/elo';
 import { calculateEloStdError, isPublishableThreshold, checkGraphConnectivity, detectCircularTriads } from '@/lib/ranking/statistics';
 import { estimateBradleyTerry, btAbilityToEloScale } from '@/lib/ranking/bradley-terry';
+import { logActivity } from '@/lib/logging';
 
 const ALGO_VERSION = 'sciblind-v2';
 
@@ -191,6 +192,12 @@ export async function GET(
         minTotalComparisons: study.minTotalComparisons,
       },
     );
+
+    logActivity('RANKINGS_VIEWED', {
+      studyId,
+      detail: `Rankings viewed (${validComparisons.length} valid comparisons)`,
+      metadata: { categoryId: categoryId || null, includeBT },
+    });
 
     return NextResponse.json({
       study: {

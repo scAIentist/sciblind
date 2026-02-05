@@ -116,6 +116,8 @@ function VotingPageContent() {
   const startTimeRef = useRef<number>(Date.now());
   const abortControllerRef = useRef<AbortController | null>(null);
   const voteInProgressRef = useRef(false);
+  const prefetchedPairRef = useRef<PairData | null>(null);
+  const prefetchingRef = useRef(false);
 
   // Memoized translations
   const lang = (study?.language || 'sl') as keyof typeof translations;
@@ -142,6 +144,18 @@ function VotingPageContent() {
     if (item.imageUrl) return item.imageUrl;
     return '/placeholder.webp';
   }, []);
+
+  // Preload an image into the browser cache
+  const preloadImage = useCallback((url: string) => {
+    const img = new Image();
+    img.src = url;
+  }, []);
+
+  // Preload images for a pair as soon as we receive the data
+  const preloadPairImages = useCallback((pairData: PairData) => {
+    preloadImage(getImageUrl(pairData.itemA));
+    preloadImage(getImageUrl(pairData.itemB));
+  }, [getImageUrl, preloadImage]);
 
   // Fetch study on mount - wait for hydration to check token
   useEffect(() => {
@@ -255,6 +269,8 @@ function VotingPageContent() {
         return;
       }
 
+      // Preload images immediately when we get the pair data
+      preloadPairImages(data);
       setPair(data);
       setCurrentCategoryId(data.categoryId);
       startTimeRef.current = Date.now();
@@ -277,30 +293,31 @@ function VotingPageContent() {
     const responseTimeMs = Date.now() - startTimeRef.current;
 
     try {
-      const res = await fetch(`/api/participate/${studyId}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionToken: token,
-          itemAId: pair.itemA.id,
-          itemBId: pair.itemB.id,
-          winnerId,
-          leftItemId: pair.leftItemId,
-          rightItemId: pair.rightItemId,
-          categoryId: currentCategoryId,
-          responseTimeMs,
+      // Submit vote and fetch next pair in parallel for speed
+      const [voteRes] = await Promise.all([
+        fetch(`/api/participate/${studyId}/vote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            sessionToken: token,
+            itemAId: pair.itemA.id,
+            itemBId: pair.itemB.id,
+            winnerId,
+            leftItemId: pair.leftItemId,
+            rightItemId: pair.rightItemId,
+            categoryId: currentCategoryId,
+            responseTimeMs,
+          }),
         }),
-      });
+      ]);
 
-      if (!res.ok) {
-        const data = await res.json();
+      if (!voteRes.ok) {
+        const data = await voteRes.json();
         throw new Error(data.error);
       }
 
-      // Clear current pair immediately to show loading state
-      setPair(null);
-
-      // Fetch fresh pair after voting
+      // Keep old pair visible while fetching next (no blank screen)
+      // fetchNextPair will call setPair with new data
       await fetchNextPair(currentCategoryId || undefined);
 
     } catch (err: any) {
@@ -550,6 +567,10 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(leftItem)}
                 alt="Option A"
+                loading="eager"
+                decoding="async"
+                // @ts-expect-error fetchpriority is a valid HTML attribute
+                fetchpriority="high"
                 className="max-w-full max-h-full object-contain rounded-md"
               />
               <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
@@ -569,6 +590,10 @@ function VotingPageContent() {
               <img
                 src={getImageUrl(rightItem)}
                 alt="Option B"
+                loading="eager"
+                decoding="async"
+                // @ts-expect-error fetchpriority is a valid HTML attribute
+                fetchpriority="high"
                 className="max-w-full max-h-full object-contain rounded-md"
               />
               <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
