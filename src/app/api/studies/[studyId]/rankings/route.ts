@@ -27,6 +27,26 @@ import { logActivity } from '@/lib/logging';
 
 const ALGO_VERSION = 'sciblind-v2';
 
+/**
+ * Check if the request comes from an authenticated admin.
+ * We check both cookie and Authorization header (same logic as middleware).
+ */
+function isAdminRequest(request: NextRequest): boolean {
+  const adminSecret = process.env.ADMIN_SECRET;
+  if (!adminSecret) return false;
+
+  const authHeader = request.headers.get('authorization');
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    if (token === adminSecret) return true;
+  }
+
+  const cookieToken = request.cookies.get('sciblind-admin-token')?.value;
+  if (cookieToken === adminSecret) return true;
+
+  return false;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ studyId: string }> }
@@ -37,6 +57,8 @@ export async function GET(
     const categoryId = searchParams.get('categoryId');
     const topN = parseInt(searchParams.get('topN') || '0', 10);
     const includeBT = searchParams.get('bt') === 'true';
+
+    const isAdmin = isAdminRequest(request);
 
     // Get study with categories
     const study = await prisma.study.findUnique({
@@ -52,6 +74,14 @@ export async function GET(
       return NextResponse.json(
         { error: 'Study not found', errorKey: 'STUDY_NOT_FOUND' },
         { status: 404 }
+      );
+    }
+
+    // Non-admin access: check if rankings are visible to participants
+    if (!isAdmin && !study.showRankingsToParticipants) {
+      return NextResponse.json(
+        { error: 'Rankings are not available for this study', errorKey: 'RANKINGS_HIDDEN' },
+        { status: 403 }
       );
     }
 
@@ -116,22 +146,17 @@ export async function GET(
       }
     }
 
-    // Format response
+    // Format response — strip sensitive fields for non-admin access
     const rankings = rankedItems.map((item, index) => {
       const stdError = calculateEloStdError(item.comparisonCount);
       const btData = btResults?.get(item.id);
 
-      return {
+      const base = {
         rank: index + 1,
         id: item.id,
-        externalId: item.externalId,
-        label: item.label,
         categoryId: item.categoryId,
         categoryName: item.category?.name,
         eloRating: Math.round(item.eloRating * 10) / 10,
-        ratingStdError: isFinite(stdError) ? Math.round(stdError * 10) / 10 : null,
-        artistRank: item.artistRank,
-        artistEloBoost: item.artistEloBoost,
         comparisonCount: item.comparisonCount,
         winCount: item.winCount,
         lossCount: item.lossCount,
@@ -139,22 +164,37 @@ export async function GET(
           item.comparisonCount > 0
             ? Math.round((item.winCount / item.comparisonCount) * 100)
             : 0,
-        leftCount: item.leftCount,
-        rightCount: item.rightCount,
-        positionBias:
-          item.leftCount + item.rightCount > 0
-            ? Math.round((item.leftCount / (item.leftCount + item.rightCount)) * 100)
-            : 50,
         confidence: getConfidenceLevel(item.comparisonCount),
-        // Bradley-Terry results (if computed)
-        ...(btData
-          ? {
-              btAbility: Math.round(btData.ability * 1000) / 1000,
-              btEloScale: Math.round(btAbilityToEloScale(btData.ability) * 10) / 10,
-              btStdError: isFinite(btData.se) ? Math.round(btData.se * 1000) / 1000 : null,
-            }
-          : {}),
       };
+
+      // Admin-only fields: externalId, label, artistRank, artistEloBoost,
+      // position bias details, std error, Bradley-Terry results
+      if (isAdmin) {
+        return {
+          ...base,
+          externalId: item.externalId,
+          label: item.label,
+          ratingStdError: isFinite(stdError) ? Math.round(stdError * 10) / 10 : null,
+          artistRank: item.artistRank,
+          artistEloBoost: item.artistEloBoost,
+          leftCount: item.leftCount,
+          rightCount: item.rightCount,
+          positionBias:
+            item.leftCount + item.rightCount > 0
+              ? Math.round((item.leftCount / (item.leftCount + item.rightCount)) * 100)
+              : 50,
+          // Bradley-Terry results (if computed)
+          ...(btData
+            ? {
+                btAbility: Math.round(btData.ability * 1000) / 1000,
+                btEloScale: Math.round(btAbilityToEloScale(btData.ability) * 10) / 10,
+                btStdError: isFinite(btData.se) ? Math.round(btData.se * 1000) / 1000 : null,
+              }
+            : {}),
+        };
+      }
+
+      return base;
     });
 
     // Get aggregate stats
@@ -195,19 +235,22 @@ export async function GET(
 
     logActivity('RANKINGS_VIEWED', {
       studyId,
-      detail: `Rankings viewed (${validComparisons.length} valid comparisons)`,
-      metadata: { categoryId: categoryId || null, includeBT },
+      detail: `Rankings viewed (${validComparisons.length} valid comparisons, admin=${isAdmin})`,
+      metadata: { categoryId: categoryId || null, includeBT, isAdmin },
     });
 
-    return NextResponse.json({
+    // Build response — admin gets full details, participants get limited view
+    const response: Record<string, unknown> = {
       study: {
         id: study.id,
         title: study.title,
-        rankingMethod: study.rankingMethod,
-        targetTopN: study.targetTopN,
         hasCategorySeparation: study.hasCategorySeparation,
-        minExposuresPerItem: study.minExposuresPerItem,
-        adaptiveKFactor: study.adaptiveKFactor,
+        ...(isAdmin ? {
+          rankingMethod: study.rankingMethod,
+          targetTopN: study.targetTopN,
+          minExposuresPerItem: study.minExposuresPerItem,
+          adaptiveKFactor: study.adaptiveKFactor,
+        } : {}),
       },
       algoVersion: ALGO_VERSION,
       categories: study.categories.map((c) => ({
@@ -217,7 +260,11 @@ export async function GET(
       })),
       selectedCategory: categoryId,
       rankings,
-      stats: {
+    };
+
+    // Admin-only: full stats and data quality diagnostics
+    if (isAdmin) {
+      response.stats = {
         totalItems: items.length,
         totalComparisons: validComparisons.length,
         totalAllComparisons: allComparisons.length,
@@ -226,8 +273,8 @@ export async function GET(
         overallPositionBias,
         positionBiasStatus:
           overallPositionBias >= 45 && overallPositionBias <= 55 ? 'good' : 'warning',
-      },
-      dataQuality: {
+      };
+      response.dataQuality = {
         dataStatus: thresholdResult.dataStatus,
         isPublishable: thresholdResult.isPublishable,
         publishableThreshold: thresholdResult.conditions,
@@ -240,8 +287,16 @@ export async function GET(
             ? Math.round(transitivity.transitivityIndex * 1000) / 1000
             : null,
         totalTriads: transitivity.totalTriads,
-      },
-    });
+      };
+    } else {
+      // Participant view: minimal stats
+      response.stats = {
+        totalItems: items.length,
+        totalComparisons: validComparisons.length,
+      };
+    }
+
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Rankings error:', error);
     return NextResponse.json(

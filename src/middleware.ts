@@ -1,17 +1,61 @@
 /**
  * Next.js Middleware
  *
- * Adds security headers to all responses.
+ * - Adds security headers to all responses
+ * - Protects admin routes with authentication
+ *
+ * Admin auth uses ADMIN_SECRET env var (interim until Keycloak).
+ * When Keycloak is integrated, this will validate JWT from auth.scaientist.eu.
  */
 
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export function middleware(request: NextRequest) {
-  // Get the response
-  const response = NextResponse.next();
+const ADMIN_SECRET = process.env.ADMIN_SECRET;
 
-  // Security headers
+function isAdminAuthenticated(request: NextRequest): boolean {
+  if (!ADMIN_SECRET) return false;
+
+  // Check Authorization header: Bearer <secret>
+  const authHeader = request.headers.get('authorization');
+  if (authHeader) {
+    const token = authHeader.replace(/^Bearer\s+/i, '');
+    if (token === ADMIN_SECRET) return true;
+  }
+
+  // Check cookie: sciblind-admin-token
+  const cookieToken = request.cookies.get('sciblind-admin-token')?.value;
+  if (cookieToken === ADMIN_SECRET) return true;
+
+  return false;
+}
+
+export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // ===== Admin Route Protection =====
+
+  // Protect all /api/admin/* routes EXCEPT /api/admin/auth (login endpoint)
+  if (pathname.startsWith('/api/admin') && !pathname.startsWith('/api/admin/auth')) {
+    if (!isAdminAuthenticated(request)) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Admin authentication required.', errorKey: 'ADMIN_AUTH_REQUIRED' },
+        { status: 401 }
+      );
+    }
+  }
+
+  // Protect admin pages — redirect to admin login page
+  // Exception: /admin/login itself must be accessible
+  if (pathname.startsWith('/admin') && !pathname.startsWith('/admin/login')) {
+    if (!isAdminAuthenticated(request)) {
+      const loginUrl = new URL('/admin/login', request.url);
+      return NextResponse.redirect(loginUrl);
+    }
+  }
+
+  // ===== Security Headers =====
+  const response = NextResponse.next();
   const headers = response.headers;
 
   // Prevent clickjacking
@@ -33,7 +77,7 @@ export function middleware(request: NextRequest) {
   );
 
   // Content Security Policy for API routes
-  if (request.nextUrl.pathname.startsWith('/api/')) {
+  if (pathname.startsWith('/api/')) {
     headers.set(
       'Content-Security-Policy',
       "default-src 'none'; frame-ancestors 'none'"

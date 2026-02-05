@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { isValidCuid } from '@/lib/security/validation';
+import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 
 const THUMBNAILS_PER_CATEGORY = 6;
 
@@ -24,6 +25,16 @@ export async function GET(
       return NextResponse.json(
         { error: 'Invalid study ID format' },
         { status: 400 }
+      );
+    }
+
+    // Rate limit by IP (forwarded for) or fallback to study ID
+    const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || studyId;
+    const rateLimit = checkRateLimit(clientIp, RATE_LIMITS.general);
+    if (!rateLimit.success) {
+      return NextResponse.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: getRateLimitHeaders(rateLimit) }
       );
     }
 
