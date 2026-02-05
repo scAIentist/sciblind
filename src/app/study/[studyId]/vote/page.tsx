@@ -47,6 +47,12 @@ interface UIConfig {
   categoryStyle: 'gallery' | 'list' | 'cards';
 }
 
+interface CheckpointInfo {
+  percentage: number;
+  completed: number;
+  target: number;
+}
+
 // ========== Translations ==========
 
 const translations = {
@@ -57,7 +63,7 @@ const translations = {
     allComplete: 'Hvala za sodelovanje!',
     selectCategory: 'Izberite kategorijo',
     of: 'od',
-    comparisons: 'primerjave',
+    comparisons: 'primerjav',
     tapToSelect: 'Za izbor pritisnite na željeno sliko',
     keyboardHint: 'Tipki A/B ali puščici ←/→',
     error: 'Prišlo je do napake. Poskusite znova.',
@@ -66,18 +72,27 @@ const translations = {
     thankYou: 'Hvala!',
     resultsHidden: 'Rezultati bodo objavljeni po zaključku študije.',
     tryAgain: 'Poskusi znova',
-    thresholdSufficient: 'Rezultati so dovolj zanesljivi. Lahko nadaljujete za boljšo natančnost ali preidete na naslednjo kategorijo.',
+    thresholdSufficient: 'Opravili ste vse zahtevane primerjave za to kategorijo. Rezultati so statistično zanesljivi.',
     thresholdInsufficient: 'Vaše primerjave so zelo pomembne za zanesljivost rezultatov. Nadaljujte za boljšo natančnost.',
     continueVoting: 'Nadaljuj primerjanje',
     nextCategory: 'Naslednja kategorija',
-    checkpoint25: 'Odlično! Četrtina opravljenih.',
-    checkpoint50: 'Polovica! Vaši odgovori so zelo dragoceni.',
-    checkpoint75: 'Skoraj! Še nekaj primerjav.',
-    checkpoint100: 'Kategorija zaključena! Rezultati so zanesljivi.',
     chooseCategory: 'Izberite kategorijo',
     start: 'Začni',
     completed: 'Zaključeno',
     yourProgress: 'Vaš napredek',
+    // Checkpoint interstitials
+    checkpoint25title: 'Četrtina opravljenih!',
+    checkpoint25body: 'Dosegli ste 25 % zahtevanih primerjav v tej kategoriji. Vsaka primerjava pomaga algoritmu bolje razvrstiti dela.',
+    checkpoint50title: 'Polovica opravljenih!',
+    checkpoint50body: 'Na polovici ste! Vaši odgovori so zelo dragoceni za zanesljivost rezultatov. Algoritem že dobro razlikuje med deli.',
+    checkpoint75title: 'Skoraj tam!',
+    checkpoint75body: '75 % primerjav opravljenih. Še nekaj primerjav za dosego minimalnega praga za zanesljive rezultate.',
+    checkpoint100title: 'Minimalni prag dosežen!',
+    checkpoint100body: 'Opravili ste minimalno zahtevano število primerjav za to kategorijo. Rezultati so sedaj statistično zanesljivi.',
+    checkpoint100optional: 'Z nadaljevanjem bi še povečali natančnost razvrstitve, vendar to ni obvezno.',
+    checkpointContinue: 'Naprej',
+    checkpointMinExplanation: 'Minimalni prag za zanesljive rezultate',
+    checkpointProgress: 'primerjav opravljenih',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -95,18 +110,27 @@ const translations = {
     thankYou: 'Thank you!',
     resultsHidden: 'Results will be published after the study ends.',
     tryAgain: 'Try again',
-    thresholdSufficient: 'Results are sufficiently reliable. You may continue for improved accuracy or proceed to the next category.',
+    thresholdSufficient: 'You have completed all required comparisons for this category. The results are statistically reliable.',
     thresholdInsufficient: 'Your comparisons are valuable for result reliability. Continue for improved accuracy.',
     continueVoting: 'Continue comparing',
     nextCategory: 'Next category',
-    checkpoint25: 'Great! Quarter done.',
-    checkpoint50: 'Halfway! Your responses are very valuable.',
-    checkpoint75: 'Almost there! Just a few more.',
-    checkpoint100: 'Category complete! Results are reliable.',
     chooseCategory: 'Choose a category',
     start: 'Start',
     completed: 'Completed',
     yourProgress: 'Your progress',
+    // Checkpoint interstitials
+    checkpoint25title: 'Quarter done!',
+    checkpoint25body: 'You have completed 25% of the required comparisons for this category. Each comparison helps the algorithm better rank the items.',
+    checkpoint50title: 'Halfway there!',
+    checkpoint50body: 'You\'re halfway done! Your responses are very valuable for the reliability of results. The algorithm is already distinguishing well between items.',
+    checkpoint75title: 'Almost there!',
+    checkpoint75body: '75% of comparisons done. Just a few more to reach the minimum threshold for reliable results.',
+    checkpoint100title: 'Minimum threshold reached!',
+    checkpoint100body: 'You have completed the minimum required comparisons for this category. The results are now statistically reliable.',
+    checkpoint100optional: 'Continuing would further improve the ranking accuracy, but it is not required.',
+    checkpointContinue: 'Continue',
+    checkpointMinExplanation: 'Minimum threshold for reliable results',
+    checkpointProgress: 'comparisons completed',
   },
 };
 
@@ -157,60 +181,118 @@ function preloadPairImages(pairData: PairData): Promise<void> {
   ]).then(() => {});
 }
 
-// ========== Progress Dots Component ==========
+// ========== Progress Bar Component ==========
 
-function ProgressDots({ completed, target, themeColor }: { completed: number; target: number; themeColor: string }) {
-  if (target > 20) {
-    const percentage = Math.min(100, Math.round((completed / target) * 100));
-    return (
-      <div className="w-full max-w-xs mx-auto px-4">
-        <div className="relative h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-visible">
-          <div
-            className="absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out"
-            style={{ width: `${percentage}%`, backgroundColor: themeColor }}
-          />
-          {[25, 50, 75, 100].map((milestone) => (
-            <div
-              key={milestone}
-              className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 transition-all duration-300 ${
-                percentage >= milestone
-                  ? 'border-white scale-110'
-                  : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800'
-              }`}
-              style={{
-                left: `${milestone}%`,
-                transform: `translateX(-50%) translateY(-50%)`,
-                backgroundColor: percentage >= milestone ? themeColor : undefined,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  }
+function ProgressBar({ completed, target, themeColor }: { completed: number; target: number; themeColor: string }) {
+  const percentage = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
 
   return (
-    <div className="flex items-center justify-center gap-1.5 flex-wrap max-w-xs mx-auto px-4">
-      {Array.from({ length: target }).map((_, i) => (
+    <div className="w-full max-w-xs mx-auto px-4">
+      <div className="relative h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-visible">
         <div
-          key={i}
-          className={`w-2 h-2 rounded-full transition-all duration-300 ${
-            i < completed ? '' : 'bg-slate-300 dark:bg-slate-600'
-          } ${i === completed ? 'animate-dot-pulse' : ''}`}
-          style={{ backgroundColor: i < completed ? themeColor : undefined }}
+          className="absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out"
+          style={{ width: `${percentage}%`, backgroundColor: themeColor }}
         />
-      ))}
+        {/* Milestone markers at 25/50/75/100% */}
+        {[25, 50, 75, 100].map((milestone) => (
+          <div
+            key={milestone}
+            className={`absolute top-1/2 w-3 h-3 rounded-full border-2 transition-all duration-300 ${
+              percentage >= milestone
+                ? 'border-white scale-110'
+                : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800'
+            }`}
+            style={{
+              left: `${milestone}%`,
+              transform: `translateX(-50%) translateY(-50%)`,
+              backgroundColor: percentage >= milestone ? themeColor : undefined,
+            }}
+          />
+        ))}
+      </div>
+      {/* Always show counter below bar */}
+      <p className="text-center text-xs text-slate-400 mt-2">
+        {completed} / {target}
+      </p>
     </div>
   );
 }
 
-// ========== Checkpoint Toast ==========
+// ========== Checkpoint Interstitial Screen ==========
 
-function CheckpointToast({ message }: { message: string }) {
+function CheckpointScreen({
+  checkpoint,
+  themeColor,
+  t,
+  onContinue,
+}: {
+  checkpoint: CheckpointInfo;
+  themeColor: string;
+  t: typeof translations.sl;
+  onContinue: () => void;
+}) {
+  const pct = checkpoint.percentage;
+  const titleKey = `checkpoint${pct}title` as keyof typeof t;
+  const bodyKey = `checkpoint${pct}body` as keyof typeof t;
+
+  const title = t[titleKey] || '';
+  const body = t[bodyKey] || '';
+
+  // For the circular progress indicator
+  const circleRadius = 40;
+  const circumference = 2 * Math.PI * circleRadius;
+  const offset = circumference - (pct / 100) * circumference;
+
   return (
-    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-slide-up-toast">
-      <div className="bg-slate-900/90 dark:bg-white/90 text-white dark:text-slate-900 px-6 py-3 rounded-full text-sm font-medium shadow-xl backdrop-blur-sm whitespace-nowrap">
-        {message}
+    <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-slate-900 p-6 animate-fade-in">
+      <div className="text-center max-w-sm w-full">
+        {/* Circular progress indicator */}
+        <div className="relative w-28 h-28 mx-auto mb-6">
+          <svg className="w-28 h-28 -rotate-90" viewBox="0 0 96 96">
+            <circle
+              cx="48" cy="48" r={circleRadius}
+              fill="none"
+              stroke="rgba(255,255,255,0.1)"
+              strokeWidth="6"
+            />
+            <circle
+              cx="48" cy="48" r={circleRadius}
+              fill="none"
+              stroke={themeColor}
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={offset}
+              className="transition-all duration-1000 ease-out"
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className="text-2xl font-bold text-white">{pct}%</span>
+          </div>
+        </div>
+
+        {/* Title */}
+        <h2 className="text-2xl font-bold text-white mb-3">{title}</h2>
+
+        {/* Body explanation */}
+        <p className="text-sm text-slate-300 mb-4 leading-relaxed px-2">
+          {body}
+        </p>
+
+        {/* Counter */}
+        <p className="text-xs text-slate-500 mb-8">
+          {checkpoint.completed} / {checkpoint.target} {t.checkpointProgress}
+        </p>
+
+        {/* Continue button */}
+        <button
+          onClick={onContinue}
+          className="w-full max-w-[240px] mx-auto px-8 py-3.5 text-white rounded-full font-semibold text-base active:scale-95 transition-transform shadow-lg flex items-center justify-center gap-2"
+          style={{ backgroundColor: themeColor }}
+        >
+          {t.checkpointContinue}
+          <ChevronRight className="w-5 h-5" />
+        </button>
       </div>
     </div>
   );
@@ -308,7 +390,7 @@ function VotingPageContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isVoting, setIsVoting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'categoryDone' | 'complete'>('loading');
+  const [viewState, setViewState] = useState<'loading' | 'categories' | 'voting' | 'checkpoint' | 'categoryDone' | 'complete'>('loading');
   const [categoryDoneInfo, setCategoryDoneInfo] = useState<{
     categoryId: string;
     thresholdMet: boolean;
@@ -319,10 +401,12 @@ function VotingPageContent() {
   // Animation/UI state
   const [selectedWinnerId, setSelectedWinnerId] = useState<string | null>(null);
   const [showVoteAnimation, setShowVoteAnimation] = useState(false);
-  const [checkpointMessage, setCheckpointMessage] = useState<string | null>(null);
+  const [checkpointInfo, setCheckpointInfo] = useState<CheckpointInfo | null>(null);
   const [categoryThumbnails, setCategoryThumbnails] = useState<Record<string, string[]>>({});
   const [thumbnailsLoading, setThumbnailsLoading] = useState(false);
   const [lastCheckpoint, setLastCheckpoint] = useState<number>(0);
+  // Pending pair data to show after checkpoint is dismissed
+  const [pendingPairData, setPendingPairData] = useState<PairData | null>(null);
   // Image transition: 0 = faded out, 1 = visible
   const [imagesReady, setImagesReady] = useState(false);
 
@@ -348,20 +432,20 @@ function VotingPageContent() {
   const lang = (study?.language || 'sl') as keyof typeof translations;
   const t = useMemo(() => translations[lang] || translations.sl, [lang]);
 
-  // Check for checkpoint messages
-  const checkForCheckpoint = useCallback((completed: number, target: number) => {
-    if (target <= 0) return;
+  /**
+   * Check if the user just crossed a checkpoint boundary.
+   * Returns the checkpoint percentage if yes, null otherwise.
+   */
+  const getCheckpointCrossed = useCallback((completed: number, target: number): number | null => {
+    if (target <= 0) return null;
     const pct = Math.round((completed / target) * 100);
     for (const cp of CHECKPOINT_PERCENTAGES) {
       if (pct >= cp && lastCheckpoint < cp) {
-        const key = `checkpoint${cp}` as keyof typeof translations.sl;
-        setCheckpointMessage(t[key] || '');
-        setLastCheckpoint(cp);
-        setTimeout(() => setCheckpointMessage(null), 3200);
-        break;
+        return cp;
       }
     }
-  }, [lastCheckpoint, t]);
+    return null;
+  }, [lastCheckpoint]);
 
   // Fetch thumbnails
   const fetchThumbnails = useCallback(async () => {
@@ -419,12 +503,17 @@ function VotingPageContent() {
           setIsLoading(false);
           return;
         }
+        // Category done, no continued voting — go to category selection
         const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`, { signal });
         const catData = await catRes.json();
         if (catData.requiresCategorySelection) {
           setCategories(catData.categories);
         }
-        setViewState('categories');
+        if (catData.complete || catData.allCategoriesComplete) {
+          setViewState('complete');
+        } else {
+          setViewState('categories');
+        }
         setIsLoading(false);
         return;
       }
@@ -437,7 +526,6 @@ function VotingPageContent() {
       startTimeRef.current = Date.now();
       setViewState('voting');
       setIsLoading(false);
-      checkForCheckpoint(data.progress.completed, data.progress.target);
 
     } catch (err: any) {
       if (err.name !== 'AbortError') {
@@ -568,23 +656,41 @@ function VotingPageContent() {
           setViewState('categoryDone');
           return;
         }
+        // Category done, go to category selection (or complete if all done)
         const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
         const catData = await catRes.json();
-        if (catData.requiresCategorySelection) {
+        if (catData.complete || catData.allCategoriesComplete) {
+          setViewState('complete');
+        } else if (catData.requiresCategorySelection) {
           setCategories(catData.categories);
+          setViewState('categories');
         }
-        setViewState('categories');
         return;
       }
 
-      // Preload next pair images then show
+      // Check for checkpoint BEFORE showing the next pair
+      const crossedCheckpoint = getCheckpointCrossed(nextData.progress.completed, nextData.progress.target);
+      if (crossedCheckpoint !== null) {
+        // Preload images so they're ready when checkpoint is dismissed
+        await preloadPairImages(nextData);
+        setPendingPairData(nextData);
+        setCheckpointInfo({
+          percentage: crossedCheckpoint,
+          completed: nextData.progress.completed,
+          target: nextData.progress.target,
+        });
+        setLastCheckpoint(crossedCheckpoint);
+        setViewState('checkpoint');
+        return;
+      }
+
+      // No checkpoint — show next pair immediately
       await preloadPairImages(nextData);
       setPair(nextData);
       setImagesReady(true);
       setCurrentCategoryId(nextData.categoryId);
       startTimeRef.current = Date.now();
       setViewState('voting');
-      checkForCheckpoint(nextData.progress.completed, nextData.progress.target);
 
     } catch (err: any) {
       setSelectedWinnerId(null);
@@ -597,7 +703,20 @@ function VotingPageContent() {
       setIsVoting(false);
       voteInProgressRef.current = false;
     }
-  }, [pair, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router, checkForCheckpoint]);
+  }, [pair, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router, getCheckpointCrossed]);
+
+  // Resume from checkpoint — show the pending pair
+  function resumeFromCheckpoint() {
+    if (pendingPairData) {
+      setPair(pendingPairData);
+      setImagesReady(true);
+      setCurrentCategoryId(pendingPairData.categoryId || null);
+      startTimeRef.current = Date.now();
+      setPendingPairData(null);
+      setCheckpointInfo(null);
+      setViewState('voting');
+    }
+  }
 
   function selectCategory(categoryId: string) {
     setCurrentCategoryId(categoryId);
@@ -691,6 +810,18 @@ function VotingPageContent() {
     );
   }
 
+  // ========== CHECKPOINT INTERSTITIAL ==========
+  if (viewState === 'checkpoint' && checkpointInfo) {
+    return (
+      <CheckpointScreen
+        checkpoint={checkpointInfo}
+        themeColor={uiConfig.themeColor}
+        t={t}
+        onContinue={resumeFromCheckpoint}
+      />
+    );
+  }
+
   // ========== CATEGORY SELECTION ==========
   if (viewState === 'categories') {
     const allCategoriesComplete = categories.every(c => c.isComplete);
@@ -750,6 +881,7 @@ function VotingPageContent() {
                       <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
                         <div className="h-full rounded-full transition-all duration-300" style={{ width: `${cat.percentage}%`, backgroundColor: uiConfig.themeColor }} />
                       </div>
+                      <p className="text-xs text-slate-500 mt-1">{cat.completed} / {cat.target}</p>
                     </div>
                   )}
 
@@ -812,9 +944,14 @@ function VotingPageContent() {
                 setIsLoading(true);
                 const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
                 const catData = await catRes.json();
-                if (catData.requiresCategorySelection) setCategories(catData.categories);
-                setViewState('categories');
-                setIsLoading(false);
+                if (catData.complete || catData.allCategoriesComplete) {
+                  setViewState('complete');
+                  setIsLoading(false);
+                } else if (catData.requiresCategorySelection) {
+                  setCategories(catData.categories);
+                  setViewState('categories');
+                  setIsLoading(false);
+                }
               }}
               className={`w-full px-6 py-3 rounded-full font-semibold active:scale-95 transition-transform ${
                 categoryDoneInfo.allowContinuedVoting ? 'bg-slate-700 text-slate-300' : 'text-white shadow-lg'
@@ -938,22 +1075,9 @@ function VotingPageContent() {
 
       {pair && uiConfig.progressStyle !== 'hidden' && (
         <footer className="flex-none py-3 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
-          {uiConfig.progressStyle === 'dots' ? (
-            <ProgressDots completed={pair.progress.completed} target={pair.progress.target} themeColor={uiConfig.themeColor} />
-          ) : (
-            <div className="w-full max-w-xs mx-auto px-4">
-              <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                <div className="h-full rounded-full transition-all duration-500 ease-out" style={{ width: `${pair.progress.percentage}%`, backgroundColor: uiConfig.themeColor }} />
-              </div>
-            </div>
-          )}
-          {uiConfig.showCounts && (
-            <p className="text-center text-xs text-slate-400 mt-1">{pair.progress.completed} {t.of} {pair.progress.target}</p>
-          )}
+          <ProgressBar completed={pair.progress.completed} target={pair.progress.target} themeColor={uiConfig.themeColor} />
         </footer>
       )}
-
-      {checkpointMessage && <CheckpointToast message={checkpointMessage} />}
     </div>
   );
 }
