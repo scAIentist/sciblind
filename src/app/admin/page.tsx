@@ -538,6 +538,7 @@ function UICustomizationPanel({ studyId }: { studyId: string }) {
     uiShowCounts: false,
     uiVoteAnimation: 'thumbs-up',
     uiCategoryStyle: 'gallery',
+    allowContinuedVoting: true,
   });
   const [loaded, setLoaded] = useState(false);
 
@@ -553,6 +554,7 @@ function UICustomizationPanel({ studyId }: { studyId: string }) {
             uiShowCounts: data.uiShowCounts ?? false,
             uiVoteAnimation: data.uiVoteAnimation || 'thumbs-up',
             uiCategoryStyle: data.uiCategoryStyle || 'gallery',
+            allowContinuedVoting: data.allowContinuedVoting ?? true,
           });
           setLoaded(true);
         })
@@ -588,8 +590,8 @@ function UICustomizationPanel({ studyId }: { studyId: string }) {
         <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
         </svg>
-        UI Customization
-        <span className="text-xs text-muted-foreground font-normal">(participant voting experience)</span>
+        Study Settings
+        <span className="text-xs text-muted-foreground font-normal">(UI & behavior customization)</span>
       </button>
 
       {isOpen && (
@@ -683,6 +685,23 @@ function UICustomizationPanel({ studyId }: { studyId: string }) {
             <label htmlFor={`showCounts-${studyId}`} className="text-sm text-muted-foreground">
               Show numeric counts (X/Y)
             </label>
+          </div>
+
+          {/* Allow Continued Voting */}
+          <div className="md:col-span-2 lg:col-span-3 flex items-center gap-2 pt-2 border-t">
+            <input
+              type="checkbox"
+              id={`allowContinued-${studyId}`}
+              checked={config.allowContinuedVoting}
+              onChange={(e) => setConfig({ ...config, allowContinuedVoting: e.target.checked })}
+              className="rounded border"
+            />
+            <label htmlFor={`allowContinued-${studyId}`} className="text-sm text-muted-foreground">
+              Allow continued voting past scientific threshold
+            </label>
+            <span className="text-xs text-muted-foreground/60 ml-1">
+              (when disabled, voting stops once minimum comparisons are met)
+            </span>
           </div>
 
           {/* Save button */}

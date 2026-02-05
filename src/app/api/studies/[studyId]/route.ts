@@ -38,6 +38,7 @@ export async function GET(
         uiShowCounts: true,
         uiVoteAnimation: true,
         uiCategoryStyle: true,
+        allowContinuedVoting: true,
         categories: {
           select: {
             id: true,
