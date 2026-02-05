@@ -52,6 +52,14 @@ model Study {
   // Methodology for PDF export
   methodologyText           String?       @db.Text
 
+  // UI Customization (for future studies)
+  uiThemeColor              String?       // Primary accent color hex, e.g. "#2563EB"
+  uiLogoPosition            String?       @default("top-center") // "top-center", "top-left", "hidden"
+  uiProgressStyle           String?       @default("dots")       // "dots", "bar", "hidden"
+  uiShowCounts              Boolean       @default(false)        // Show numeric counts (X/Y)
+  uiVoteAnimation           String?       @default("thumbs-up")  // "thumbs-up", "checkmark", "border-only", "none"
+  uiCategoryStyle           String?       @default("gallery")    // "gallery" (thumbnails), "list", "cards"
+
   // State
   isActive                  Boolean       @default(true)
   publishedAt               DateTime?

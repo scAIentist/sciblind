@@ -2,6 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
+import { ThumbsUp, Check, ChevronRight } from 'lucide-react';
+
+// ========== Types ==========
 
 interface ItemData {
   id: string;
@@ -35,7 +38,17 @@ interface PairData {
   };
 }
 
-// Translations
+interface UIConfig {
+  themeColor: string;
+  logoPosition: 'top-center' | 'top-left' | 'hidden';
+  progressStyle: 'dots' | 'bar' | 'hidden';
+  showCounts: boolean;
+  voteAnimation: 'thumbs-up' | 'checkmark' | 'border-only' | 'none';
+  categoryStyle: 'gallery' | 'list' | 'cards';
+}
+
+// ========== Translations ==========
+
 const translations = {
   sl: {
     selectImage: 'Izberite sliko, ki se vam zdi bolj primerna.',
@@ -57,6 +70,15 @@ const translations = {
     thresholdInsufficient: 'Vaše primerjave so zelo pomembne za zanesljivost rezultatov. Nadaljujte za boljšo natančnost.',
     continueVoting: 'Nadaljuj primerjanje',
     nextCategory: 'Naslednja kategorija',
+    // New checkpoint + UI translations
+    checkpoint25: 'Odlično! Četrtina opravljenih.',
+    checkpoint50: 'Polovica! Vaši odgovori so zelo dragoceni.',
+    checkpoint75: 'Skoraj! Še nekaj primerjav.',
+    checkpoint100: 'Kategorija zaključena! Rezultati so zanesljivi.',
+    chooseCategory: 'Izberite kategorijo',
+    start: 'Začni',
+    completed: 'Zaključeno',
+    yourProgress: 'Vaš napredek',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -78,11 +100,181 @@ const translations = {
     thresholdInsufficient: 'Your comparisons are valuable for result reliability. Continue for improved accuracy.',
     continueVoting: 'Continue comparing',
     nextCategory: 'Next category',
+    // New checkpoint + UI translations
+    checkpoint25: 'Great! Quarter done.',
+    checkpoint50: 'Halfway! Your responses are very valuable.',
+    checkpoint75: 'Almost there! Just a few more.',
+    checkpoint100: 'Category complete! Results are reliable.',
+    chooseCategory: 'Choose a category',
+    start: 'Start',
+    completed: 'Completed',
+    yourProgress: 'Your progress',
   },
 };
 
-// Supabase storage URLs
+// ========== Constants ==========
+
 const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
+const VOTE_ANIMATION_DURATION = 700; // ms before transitioning to next pair
+const CHECKPOINT_PERCENTAGES = [25, 50, 75, 100];
+
+// Default UI config (IzVRS-style)
+const DEFAULT_UI_CONFIG: UIConfig = {
+  themeColor: '#2563EB',
+  logoPosition: 'top-center',
+  progressStyle: 'dots',
+  showCounts: false,
+  voteAnimation: 'thumbs-up',
+  categoryStyle: 'gallery',
+};
+
+// ========== Progress Dots Component ==========
+
+function ProgressDots({
+  completed,
+  target,
+  themeColor,
+}: {
+  completed: number;
+  target: number;
+  themeColor: string;
+}) {
+  // For large targets, use a segmented bar with milestone markers
+  if (target > 20) {
+    const percentage = Math.min(100, Math.round((completed / target) * 100));
+    return (
+      <div className="w-full max-w-xs mx-auto px-4">
+        {/* Milestone markers */}
+        <div className="relative h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-visible">
+          {/* Fill bar */}
+          <div
+            className="absolute inset-y-0 left-0 rounded-full transition-all duration-500 ease-out"
+            style={{ width: `${percentage}%`, backgroundColor: themeColor }}
+          />
+          {/* Milestone dots at 25%, 50%, 75%, 100% */}
+          {[25, 50, 75, 100].map((milestone) => (
+            <div
+              key={milestone}
+              className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 transition-all duration-300 ${
+                percentage >= milestone
+                  ? 'border-white scale-110'
+                  : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800'
+              }`}
+              style={{
+                left: `${milestone}%`,
+                transform: `translateX(-50%) translateY(-50%)`,
+                backgroundColor: percentage >= milestone ? themeColor : undefined,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // For small targets (<=20), show individual dots
+  return (
+    <div className="flex items-center justify-center gap-1.5 flex-wrap max-w-xs mx-auto px-4">
+      {Array.from({ length: target }).map((_, i) => (
+        <div
+          key={i}
+          className={`w-2 h-2 rounded-full transition-all duration-300 ${
+            i < completed ? '' : 'bg-slate-300 dark:bg-slate-600'
+          } ${i === completed ? 'animate-dot-pulse' : ''}`}
+          style={{
+            backgroundColor: i < completed ? themeColor : undefined,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ========== Checkpoint Toast Component ==========
+
+function CheckpointToast({ message }: { message: string }) {
+  return (
+    <div className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-slide-up-toast">
+      <div className="bg-slate-900/90 dark:bg-white/90 text-white dark:text-slate-900 px-6 py-3 rounded-full text-sm font-medium shadow-xl backdrop-blur-sm whitespace-nowrap">
+        {message}
+      </div>
+    </div>
+  );
+}
+
+// ========== Confetti Component ==========
+
+function ConfettiCelebration({ themeColor }: { themeColor: string }) {
+  const particles = useMemo(() => {
+    return Array.from({ length: 20 }).map((_, i) => ({
+      id: i,
+      left: `${Math.random() * 100}%`,
+      delay: `${Math.random() * 2}s`,
+      duration: `${2 + Math.random() * 2}s`,
+      size: `${4 + Math.random() * 8}px`,
+      opacity: 0.3 + Math.random() * 0.7,
+    }));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden z-40">
+      {particles.map((p) => (
+        <div
+          key={p.id}
+          className="absolute rounded-full"
+          style={{
+            left: p.left,
+            top: '-20px',
+            width: p.size,
+            height: p.size,
+            backgroundColor: themeColor,
+            opacity: p.opacity,
+            animation: `confetti-fall ${p.duration} ${p.delay} ease-in forwards`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// ========== Category Thumbnail Grid Component ==========
+
+function ThumbnailGrid({
+  imageKeys,
+  isComplete,
+}: {
+  imageKeys: string[];
+  isComplete: boolean;
+}) {
+  return (
+    <div className={`grid grid-cols-3 gap-1 rounded-lg overflow-hidden ${isComplete ? 'opacity-50 grayscale' : ''}`}>
+      {imageKeys.slice(0, 6).map((key, i) => {
+        const parts = key.split('/');
+        const url =
+          parts[0] === 'izvrs' && parts.length === 3
+            ? `${SUPABASE_STORAGE_URL}/${parts[1]}/${parts[2]}`
+            : key;
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={i}
+            src={url}
+            alt=""
+            loading="lazy"
+            className="w-full aspect-square object-cover"
+          />
+        );
+      })}
+      {/* Fill remaining slots with placeholder */}
+      {imageKeys.length < 6 &&
+        Array.from({ length: 6 - imageKeys.length }).map((_, i) => (
+          <div key={`placeholder-${i}`} className="w-full aspect-square bg-slate-700" />
+        ))}
+    </div>
+  );
+}
+
+// ========== Main Voting Page Content ==========
 
 function VotingPageContent() {
   const params = useParams();
@@ -107,6 +299,13 @@ function VotingPageContent() {
   } | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
 
+  // New animation/UI state
+  const [selectedWinnerId, setSelectedWinnerId] = useState<string | null>(null);
+  const [showVoteAnimation, setShowVoteAnimation] = useState(false);
+  const [checkpointMessage, setCheckpointMessage] = useState<string | null>(null);
+  const [categoryThumbnails, setCategoryThumbnails] = useState<Record<string, string[]>>({});
+  const [lastCheckpoint, setLastCheckpoint] = useState<number>(0);
+
   // Mark as hydrated on mount
   useEffect(() => {
     setIsHydrated(true);
@@ -118,6 +317,19 @@ function VotingPageContent() {
   const voteInProgressRef = useRef(false);
   const prefetchedPairRef = useRef<PairData | null>(null);
   const prefetchingRef = useRef(false);
+
+  // UI config derived from study
+  const uiConfig = useMemo<UIConfig>(() => {
+    if (!study) return DEFAULT_UI_CONFIG;
+    return {
+      themeColor: study.uiThemeColor || DEFAULT_UI_CONFIG.themeColor,
+      logoPosition: (study.uiLogoPosition || DEFAULT_UI_CONFIG.logoPosition) as UIConfig['logoPosition'],
+      progressStyle: (study.uiProgressStyle || DEFAULT_UI_CONFIG.progressStyle) as UIConfig['progressStyle'],
+      showCounts: study.uiShowCounts ?? DEFAULT_UI_CONFIG.showCounts,
+      voteAnimation: (study.uiVoteAnimation || DEFAULT_UI_CONFIG.voteAnimation) as UIConfig['voteAnimation'],
+      categoryStyle: (study.uiCategoryStyle || DEFAULT_UI_CONFIG.categoryStyle) as UIConfig['categoryStyle'],
+    };
+  }, [study]);
 
   // Memoized translations
   const lang = (study?.language || 'sl') as keyof typeof translations;
@@ -133,7 +345,7 @@ function VotingPageContent() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Image URL builder - use direct storage URL (images already optimized during upload)
+  // Image URL builder
   const getImageUrl = useCallback((item: ItemData): string => {
     if (item.imageKey) {
       const parts = item.imageKey.split('/');
@@ -145,19 +357,49 @@ function VotingPageContent() {
     return '/placeholder.webp';
   }, []);
 
-  // Preload an image into the browser cache
+  // Preload images
   const preloadImage = useCallback((url: string) => {
     const img = new Image();
     img.src = url;
   }, []);
 
-  // Preload images for a pair as soon as we receive the data
   const preloadPairImages = useCallback((pairData: PairData) => {
     preloadImage(getImageUrl(pairData.itemA));
     preloadImage(getImageUrl(pairData.itemB));
   }, [getImageUrl, preloadImage]);
 
-  // Fetch study on mount - wait for hydration to check token
+  // Fetch category thumbnails
+  const fetchThumbnails = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/participate/${studyId}/category-thumbnails`);
+      if (res.ok) {
+        const data = await res.json();
+        setCategoryThumbnails(data.categories || {});
+      }
+    } catch {
+      // Non-critical, thumbnails are just for UI
+    }
+  }, [studyId]);
+
+  // Check for checkpoint messages
+  const checkForCheckpoint = useCallback((completed: number, target: number) => {
+    if (target <= 0) return;
+    const pct = Math.round((completed / target) * 100);
+
+    for (const cp of CHECKPOINT_PERCENTAGES) {
+      if (pct >= cp && lastCheckpoint < cp) {
+        const key = `checkpoint${cp}` as keyof typeof translations.sl;
+        setCheckpointMessage(t[key] || '');
+        setLastCheckpoint(cp);
+
+        // Auto-dismiss after animation completes (3s)
+        setTimeout(() => setCheckpointMessage(null), 3200);
+        break;
+      }
+    }
+  }, [lastCheckpoint, t]);
+
+  // Fetch study on mount
   useEffect(() => {
     if (!isHydrated) return;
 
@@ -191,19 +433,24 @@ function VotingPageContent() {
     };
   }, [studyId, token, isHydrated]);
 
+  // Fetch thumbnails when entering category selection
+  useEffect(() => {
+    if (viewState === 'categories' && Object.keys(categoryThumbnails).length === 0) {
+      fetchThumbnails();
+    }
+  }, [viewState, categoryThumbnails, fetchThumbnails]);
+
   // Keyboard shortcuts
   useEffect(() => {
-    if (viewState !== 'voting' || !pair || isVoting) return;
+    if (viewState !== 'voting' || !pair || isVoting || showVoteAnimation) return;
 
     function handleKeyDown(e: KeyboardEvent) {
       if (voteInProgressRef.current) return;
 
       const key = e.key.toLowerCase();
-      // A or Left arrow = left/top image (Option A)
       if (key === 'a' || key === 'arrowleft') {
         e.preventDefault();
         handleVote(pair!.leftItemId);
-      // B or Right arrow = right/bottom image (Option B)
       } else if (key === 'b' || key === 'arrowright') {
         e.preventDefault();
         handleVote(pair!.rightItemId);
@@ -212,7 +459,7 @@ function VotingPageContent() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [viewState, pair, isVoting]);
+  }, [viewState, pair, isVoting, showVoteAnimation]);
 
   async function fetchNextPair(categoryId?: string, signal?: AbortSignal) {
     try {
@@ -246,7 +493,6 @@ function VotingPageContent() {
       }
 
       if (data.categoryComplete) {
-        // Show threshold-aware category completion screen
         if (data.allowContinuedVoting) {
           setCategoryDoneInfo({
             categoryId: data.categoryId,
@@ -258,7 +504,6 @@ function VotingPageContent() {
           return;
         }
 
-        // Category is done — go back to category selection
         const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`, { signal });
         const catData = await catRes.json();
         if (catData.requiresCategorySelection) {
@@ -269,13 +514,16 @@ function VotingPageContent() {
         return;
       }
 
-      // Preload images immediately when we get the pair data
+      // Preload images immediately
       preloadPairImages(data);
       setPair(data);
       setCurrentCategoryId(data.categoryId);
       startTimeRef.current = Date.now();
       setViewState('voting');
       setIsLoading(false);
+
+      // Check for checkpoints
+      checkForCheckpoint(data.progress.completed, data.progress.target);
 
     } catch (err: any) {
       if (err.name !== 'AbortError') {
@@ -286,50 +534,59 @@ function VotingPageContent() {
   }
 
   const handleVote = useCallback(async (winnerId: string) => {
-    if (!pair || isVoting || voteInProgressRef.current) return;
+    if (!pair || isVoting || voteInProgressRef.current || showVoteAnimation) return;
 
     voteInProgressRef.current = true;
-    setIsVoting(true);
+    setSelectedWinnerId(winnerId);
+    setShowVoteAnimation(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    try {
-      // Submit vote and fetch next pair in parallel for speed
-      const [voteRes] = await Promise.all([
-        fetch(`/api/participate/${studyId}/vote`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionToken: token,
-            itemAId: pair.itemA.id,
-            itemBId: pair.itemB.id,
-            winnerId,
-            leftItemId: pair.leftItemId,
-            rightItemId: pair.rightItemId,
-            categoryId: currentCategoryId,
-            responseTimeMs,
+    // Show animation first, then submit
+    setTimeout(async () => {
+      setIsVoting(true);
+      try {
+        const [voteRes] = await Promise.all([
+          fetch(`/api/participate/${studyId}/vote`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              sessionToken: token,
+              itemAId: pair.itemA.id,
+              itemBId: pair.itemB.id,
+              winnerId,
+              leftItemId: pair.leftItemId,
+              rightItemId: pair.rightItemId,
+              categoryId: currentCategoryId,
+              responseTimeMs,
+            }),
           }),
-        }),
-      ]);
+        ]);
 
-      if (!voteRes.ok) {
-        const data = await voteRes.json();
-        throw new Error(data.error);
+        if (!voteRes.ok) {
+          const data = await voteRes.json();
+          throw new Error(data.error);
+        }
+
+        // Reset animation state before fetching next
+        setSelectedWinnerId(null);
+        setShowVoteAnimation(false);
+
+        await fetchNextPair(currentCategoryId || undefined);
+
+      } catch (err: any) {
+        setSelectedWinnerId(null);
+        setShowVoteAnimation(false);
+        setError(err.message || t.error);
+      } finally {
+        setIsVoting(false);
+        voteInProgressRef.current = false;
       }
-
-      // Keep old pair visible while fetching next (no blank screen)
-      // fetchNextPair will call setPair with new data
-      await fetchNextPair(currentCategoryId || undefined);
-
-    } catch (err: any) {
-      setError(err.message || t.error);
-    } finally {
-      setIsVoting(false);
-      voteInProgressRef.current = false;
-    }
-  }, [pair, isVoting, token, studyId, currentCategoryId, t.error]);
+    }, VOTE_ANIMATION_DURATION);
+  }, [pair, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error]);
 
   function selectCategory(categoryId: string) {
     setCurrentCategoryId(categoryId);
+    setLastCheckpoint(0); // Reset checkpoints for new category
     setIsLoading(true);
     fetchNextPair(categoryId);
   }
@@ -344,15 +601,45 @@ function VotingPageContent() {
   const leftItem = pair ? (pair.leftItemId === pair.itemA.id ? pair.itemA : pair.itemB) : null;
   const rightItem = pair ? (pair.rightItemId === pair.itemA.id ? pair.itemA : pair.itemB) : null;
 
+  // Get study logos — use Izvrstna logo as primary display logo
+  const displayLogoUrl = useMemo(() => {
+    if (!study?.logoUrls?.length) return null;
+    // Prefer Izvrstna logo if available
+    const izvrstna = study.logoUrls.find((l: string) => l.toLowerCase().includes('izvrstna'));
+    return `/logos/${izvrstna || study.logoUrls[0]}`;
+  }, [study]);
+
   // ========== RENDER ==========
+
+  // Logo component (reused across views)
+  const LogoHeader = useMemo(() => {
+    if (uiConfig.logoPosition === 'hidden' || !displayLogoUrl) return null;
+    return (
+      <div className={`flex-none pt-4 pb-2 ${uiConfig.logoPosition === 'top-center' ? 'text-center' : 'text-left px-4'}`}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={displayLogoUrl}
+          alt="Logo"
+          className="h-12 sm:h-14 w-auto object-contain inline-block"
+        />
+      </div>
+    );
+  }, [uiConfig.logoPosition, displayLogoUrl]);
 
   // Loading state
   if (isLoading) {
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-slate-50">
         <div className="text-center">
-          <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="mt-4 text-slate-500 text-sm">{t.loading}</p>
+          {displayLogoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={displayLogoUrl} alt="Logo" className="h-14 w-auto object-contain mx-auto mb-6 animate-pulse" />
+          )}
+          <div
+            className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+            style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+          />
+          <p className="mt-4 text-slate-400 text-sm">{t.loading}</p>
         </div>
       </div>
     );
@@ -361,17 +648,18 @@ function VotingPageContent() {
   // Error state
   if (error) {
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50 p-4">
         <div className="text-center max-w-sm">
-          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <p className="text-slate-700 dark:text-slate-300 mb-4">{error}</p>
+          <p className="text-slate-600 mb-4">{error}</p>
           <button
             onClick={retryAfterError}
-            className="px-6 py-2.5 bg-blue-600 text-white rounded-lg font-medium active:scale-95 transition-transform"
+            className="px-6 py-2.5 text-white rounded-full font-medium active:scale-95 transition-transform"
+            style={{ backgroundColor: uiConfig.themeColor }}
           >
             {t.tryAgain}
           </button>
@@ -380,78 +668,117 @@ function VotingPageContent() {
     );
   }
 
-  // Complete state
+  // ========== COMPLETE STATE ==========
   if (viewState === 'complete') {
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-6">
-        <div className="text-center max-w-sm">
-          <div className="w-20 h-20 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-            </svg>
+      <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-slate-900 p-6 relative overflow-hidden">
+        <ConfettiCelebration themeColor={uiConfig.themeColor} />
+        <div className="text-center max-w-sm relative z-10 animate-fade-in">
+          <div
+            className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in"
+            style={{ backgroundColor: `${uiConfig.themeColor}20` }}
+          >
+            <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-3">{t.thankYou}</h1>
-          <p className="text-slate-600 dark:text-slate-400 mb-6">{t.allComplete}</p>
-          <p className="text-sm text-slate-500">{t.resultsHidden}</p>
+          <h1 className="text-3xl font-bold text-white mb-3">{t.thankYou}</h1>
+          <p className="text-slate-400 mb-8">{t.allComplete}</p>
+          <p className="text-sm text-slate-500 mb-8">{t.resultsHidden}</p>
+          {displayLogoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={displayLogoUrl} alt="Logo" className="h-10 w-auto object-contain mx-auto opacity-50" />
+          )}
         </div>
       </div>
     );
   }
 
-  // Category selection
+  // ========== CATEGORY SELECTION ==========
   if (viewState === 'categories') {
     const allCategoriesComplete = categories.every(c => c.isComplete);
+    const useGallery = uiConfig.categoryStyle === 'gallery';
 
     return (
-      <div className="min-h-[100dvh] bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-4 safe-area-inset">
-        <div className="max-w-lg mx-auto pt-4">
-          <h1 className="text-xl font-bold text-center text-slate-900 dark:text-white mb-6">
-            {allCategoriesComplete ? t.categoryComplete : t.selectCategory}
-          </h1>
+      <div className="min-h-[100dvh] bg-slate-900 p-4 pb-8 safe-area-inset">
+        <div className="max-w-lg mx-auto">
+          {/* Logo */}
+          {displayLogoUrl && (
+            <div className="pt-4 pb-2 text-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={displayLogoUrl} alt="Logo" className="h-12 sm:h-14 w-auto object-contain inline-block opacity-90" />
+            </div>
+          )}
 
-          <div className="space-y-3">
+          {/* Title */}
+          <div className="text-center mt-4 mb-6">
+            <h1 className="text-lg font-semibold text-white uppercase tracking-wider">
+              {allCategoriesComplete ? t.categoryComplete : t.chooseCategory}
+            </h1>
+            <div className="w-12 h-0.5 mx-auto mt-2 rounded-full" style={{ backgroundColor: uiConfig.themeColor }} />
+          </div>
+
+          {/* Category Cards */}
+          <div className="space-y-4">
             {categories.map((cat) => (
-              <button
+              <div
                 key={cat.id}
-                onClick={() => !cat.isComplete && selectCategory(cat.id)}
-                disabled={cat.isComplete}
-                className={`w-full p-4 rounded-xl text-left transition-all active:scale-[0.98] ${
-                  cat.isComplete
-                    ? 'bg-slate-100 dark:bg-slate-800/50 opacity-60'
-                    : 'bg-white dark:bg-slate-800 shadow-sm hover:shadow-md active:shadow-sm'
+                className={`rounded-xl overflow-hidden transition-all ${
+                  cat.isComplete ? 'opacity-60' : 'shadow-lg shadow-black/20'
                 }`}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-semibold text-slate-900 dark:text-white">{cat.name}</h3>
-                  {cat.isComplete && (
-                    <span className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                      <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </span>
+                {/* Thumbnail Grid (gallery mode) */}
+                {useGallery && categoryThumbnails[cat.id]?.length > 0 && (
+                  <ThumbnailGrid
+                    imageKeys={categoryThumbnails[cat.id]}
+                    isComplete={cat.isComplete}
+                  />
+                )}
+
+                {/* Card Body */}
+                <div className="bg-slate-800 p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-semibold text-white text-base">{cat.name}</h3>
+                    {cat.isComplete && (
+                      <span className="flex items-center gap-1.5 text-green-400 text-xs font-medium">
+                        <Check className="w-4 h-4" />
+                        {t.completed}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Mini progress */}
+                  {!cat.isComplete && cat.completed > 0 && (
+                    <div className="mb-3">
+                      <div className="h-1 bg-slate-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{ width: `${cat.percentage}%`, backgroundColor: uiConfig.themeColor }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Start button */}
+                  {!cat.isComplete && (
+                    <button
+                      onClick={() => selectCategory(cat.id)}
+                      className="w-full mt-1 py-2.5 text-white rounded-lg font-semibold text-sm uppercase tracking-wide active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                      style={{ backgroundColor: uiConfig.themeColor }}
+                    >
+                      {cat.completed > 0 ? t.continueVoting : t.start}
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
                   )}
                 </div>
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs text-slate-500">
-                    <span>{cat.completed} {t.of} {cat.target}</span>
-                    <span>{cat.percentage}%</span>
-                  </div>
-                  <div className="h-1.5 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-600 rounded-full transition-all duration-300"
-                      style={{ width: `${cat.percentage}%` }}
-                    />
-                  </div>
-                </div>
-              </button>
+              </div>
             ))}
           </div>
 
+          {/* Finish button when all complete */}
           {allCategoriesComplete && (
-            <div className="mt-6 text-center">
+            <div className="mt-8 text-center">
               <button
                 onClick={() => setViewState('complete')}
-                className="px-8 py-3 bg-green-600 text-white rounded-xl font-semibold active:scale-95 transition-transform shadow-lg shadow-green-600/25"
+                className="px-10 py-3.5 bg-green-500 text-white rounded-full font-semibold text-lg active:scale-95 transition-transform shadow-lg shadow-green-500/25"
               >
                 {t.finishStudy}
               </button>
@@ -462,20 +789,21 @@ function VotingPageContent() {
     );
   }
 
-  // Category done with threshold messaging
+  // ========== CATEGORY DONE ==========
   if (viewState === 'categoryDone' && categoryDoneInfo) {
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950 p-6">
-        <div className="text-center max-w-sm">
-          <div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-5">
-            <svg className="w-8 h-8 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-900 p-6">
+        <div className="text-center max-w-sm animate-fade-in">
+          <div
+            className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in"
+            style={{ backgroundColor: `${uiConfig.themeColor}20` }}
+          >
+            <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
           </div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-3">
+          <h2 className="text-2xl font-bold text-white mb-3">
             {t.categoryComplete}
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-400 mb-6">
+          <p className="text-sm text-slate-400 mb-8 leading-relaxed">
             {categoryDoneInfo.thresholdMet ? t.thresholdSufficient : t.thresholdInsufficient}
           </p>
           <div className="space-y-3">
@@ -486,7 +814,8 @@ function VotingPageContent() {
                   setIsLoading(true);
                   fetchNextPair(categoryDoneInfo.categoryId);
                 }}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold active:scale-95 transition-transform"
+                className="w-full px-6 py-3 text-white rounded-full font-semibold active:scale-95 transition-transform"
+                style={{ backgroundColor: uiConfig.themeColor }}
               >
                 {t.continueVoting}
               </button>
@@ -494,6 +823,7 @@ function VotingPageContent() {
             <button
               onClick={async () => {
                 setCategoryDoneInfo(null);
+                setLastCheckpoint(0);
                 setIsLoading(true);
                 const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
                 const catData = await catRes.json();
@@ -503,11 +833,16 @@ function VotingPageContent() {
                 setViewState('categories');
                 setIsLoading(false);
               }}
-              className={`w-full px-6 py-3 rounded-xl font-semibold active:scale-95 transition-transform ${
+              className={`w-full px-6 py-3 rounded-full font-semibold active:scale-95 transition-transform ${
                 categoryDoneInfo.allowContinuedVoting
-                  ? 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
-                  : 'bg-green-600 text-white shadow-lg shadow-green-600/25'
+                  ? 'bg-slate-700 text-slate-300'
+                  : 'text-white shadow-lg'
               }`}
+              style={
+                !categoryDoneInfo.allowContinuedVoting
+                  ? { backgroundColor: uiConfig.themeColor }
+                  : undefined
+              }
             >
               {t.nextCategory}
             </button>
@@ -517,101 +852,152 @@ function VotingPageContent() {
     );
   }
 
-  // Voting interface - BOTH images must be visible without scrolling
-  // Images are LANDSCAPE format - wider than tall
+  // ========== VOTING INTERFACE ==========
   return (
-    <div className="h-[100dvh] flex flex-col bg-slate-100 dark:bg-slate-950 overflow-hidden">
-      {/* Compact Header */}
-      <header className="flex-none px-3 py-1.5 bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center justify-between">
-          <button
-            onClick={() => setViewState('categories')}
-            className="text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
-          >
-            {t.backToCategories}
-          </button>
-          <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
-            {pair?.progress.completed}/{pair?.progress.target}
-          </span>
-        </div>
-        <div className="h-0.5 bg-slate-200 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
-          <div
-            className="h-full bg-blue-600 rounded-full transition-all duration-300"
-            style={{ width: `${pair?.progress.percentage || 0}%` }}
-          />
-        </div>
-      </header>
+    <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
+      {/* Logo at top */}
+      {LogoHeader}
 
-      {/* Compact Prompt */}
-      <div className="flex-none text-center py-1.5 px-2">
-        <h1 className="text-sm font-semibold text-slate-900 dark:text-white">
-          {study?.participantPrompt || t.selectImage}
-        </h1>
-        <p className="text-[10px] text-slate-400 hidden sm:block">{t.keyboardHint}</p>
-      </div>
-
-      {/* Main voting area - CSS Grid: stacked on mobile (1 col), side-by-side on desktop (2 cols) */}
-      {/* Works for BOTH landscape (wide) AND portrait (tall) images - object-contain prevents cropping */}
-      <main className="flex-1 min-h-0 p-2 sm:p-4 overflow-hidden">
+      {/* Main voting area */}
+      <main className="flex-1 min-h-0 px-3 sm:px-6 pb-2 overflow-hidden">
         {pair && leftItem && rightItem ? (
-          <div className="w-full h-full grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
-            {/* Option A */}
-            <button
-              onClick={() => handleVote(pair.leftItemId)}
-              disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center overflow-hidden
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
-                focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={getImageUrl(leftItem)}
-                alt="Option A"
-                loading="eager"
-                decoding="async"
-                // @ts-expect-error fetchpriority is a valid HTML attribute
-                fetchpriority="high"
-                className="max-w-full max-h-full object-contain rounded-md"
-              />
-              <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
-                A
-              </div>
-            </button>
+          <div className="w-full h-full flex flex-col">
+            {/* Images container */}
+            <div className="flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
+              {/* Left / Top image */}
+              <button
+                onClick={() => handleVote(pair.leftItemId)}
+                disabled={isVoting || showVoteAnimation}
+                className={`relative bg-white rounded-xl shadow-sm transition-all duration-300 p-2 flex items-center justify-center overflow-hidden
+                  ${showVoteAnimation && selectedWinnerId === pair.leftItemId ? 'ring-4 animate-selection-ring' : ''}
+                  ${showVoteAnimation && selectedWinnerId !== pair.leftItemId ? 'animate-fade-out-half' : ''}
+                  ${isVoting || showVoteAnimation ? 'pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg cursor-pointer'}
+                  focus:outline-none`}
+                style={
+                  showVoteAnimation && selectedWinnerId === pair.leftItemId
+                    ? { boxShadow: `0 0 0 4px ${uiConfig.themeColor}` }
+                    : undefined
+                }
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={getImageUrl(leftItem)}
+                  alt=""
+                  loading="eager"
+                  decoding="async"
+                  // @ts-expect-error fetchpriority is a valid HTML attribute
+                  fetchpriority="high"
+                  className="max-w-full max-h-full object-contain rounded-lg"
+                />
+                {/* Thumbs-up animation overlay */}
+                {showVoteAnimation && selectedWinnerId === pair.leftItemId && uiConfig.voteAnimation === 'thumbs-up' && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                    <div className="animate-thumbs-up bg-white/90 p-3 rounded-full shadow-xl">
+                      <ThumbsUp className="w-8 h-8" style={{ color: uiConfig.themeColor }} fill={uiConfig.themeColor} />
+                    </div>
+                  </div>
+                )}
+                {showVoteAnimation && selectedWinnerId === pair.leftItemId && uiConfig.voteAnimation === 'checkmark' && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                    <div className="animate-thumbs-up bg-white/90 p-3 rounded-full shadow-xl">
+                      <Check className="w-8 h-8" style={{ color: uiConfig.themeColor }} strokeWidth={3} />
+                    </div>
+                  </div>
+                )}
+              </button>
 
-            {/* Option B */}
-            <button
-              onClick={() => handleVote(pair.rightItemId)}
-              disabled={isVoting}
-              className={`relative bg-white dark:bg-slate-800 rounded-lg sm:rounded-xl shadow-md transition-all duration-100 p-2 flex items-center justify-center overflow-hidden
-                ${isVoting ? 'opacity-70 pointer-events-none' : 'active:scale-[0.99] hover:shadow-xl hover:ring-4 hover:ring-blue-400/50 cursor-pointer'}
-                focus:outline-none focus:ring-4 focus:ring-blue-500/50`}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={getImageUrl(rightItem)}
-                alt="Option B"
-                loading="eager"
-                decoding="async"
-                // @ts-expect-error fetchpriority is a valid HTML attribute
-                fetchpriority="high"
-                className="max-w-full max-h-full object-contain rounded-md"
-              />
-              <div className="absolute top-3 left-3 sm:top-4 sm:left-4 px-3 py-1.5 bg-black/70 text-white text-sm font-bold rounded-full shadow-lg">
-                B
-              </div>
-            </button>
+              {/* Right / Bottom image */}
+              <button
+                onClick={() => handleVote(pair.rightItemId)}
+                disabled={isVoting || showVoteAnimation}
+                className={`relative bg-white rounded-xl shadow-sm transition-all duration-300 p-2 flex items-center justify-center overflow-hidden
+                  ${showVoteAnimation && selectedWinnerId === pair.rightItemId ? 'ring-4 animate-selection-ring' : ''}
+                  ${showVoteAnimation && selectedWinnerId !== pair.rightItemId ? 'animate-fade-out-half' : ''}
+                  ${isVoting || showVoteAnimation ? 'pointer-events-none' : 'active:scale-[0.99] hover:shadow-lg cursor-pointer'}
+                  focus:outline-none`}
+                style={
+                  showVoteAnimation && selectedWinnerId === pair.rightItemId
+                    ? { boxShadow: `0 0 0 4px ${uiConfig.themeColor}` }
+                    : undefined
+                }
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={getImageUrl(rightItem)}
+                  alt=""
+                  loading="eager"
+                  decoding="async"
+                  // @ts-expect-error fetchpriority is a valid HTML attribute
+                  fetchpriority="high"
+                  className="max-w-full max-h-full object-contain rounded-lg"
+                />
+                {/* Thumbs-up animation overlay */}
+                {showVoteAnimation && selectedWinnerId === pair.rightItemId && uiConfig.voteAnimation === 'thumbs-up' && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                    <div className="animate-thumbs-up bg-white/90 p-3 rounded-full shadow-xl">
+                      <ThumbsUp className="w-8 h-8" style={{ color: uiConfig.themeColor }} fill={uiConfig.themeColor} />
+                    </div>
+                  </div>
+                )}
+                {showVoteAnimation && selectedWinnerId === pair.rightItemId && uiConfig.voteAnimation === 'checkmark' && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                    <div className="animate-thumbs-up bg-white/90 p-3 rounded-full shadow-xl">
+                      <Check className="w-8 h-8" style={{ color: uiConfig.themeColor }} strokeWidth={3} />
+                    </div>
+                  </div>
+                )}
+              </button>
+            </div>
+
+            {/* Prompt text */}
+            <div className="flex-none text-center py-2">
+              <p className="text-sm text-slate-500">
+                {study?.participantPrompt || t.selectImage}
+              </p>
+            </div>
           </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+            <div
+              className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin"
+              style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+            />
           </div>
         )}
       </main>
 
-      {/* Mobile tap hint */}
-      <div className="flex-none text-center py-1 sm:hidden">
-        <p className="text-[10px] text-slate-400">{t.tapToSelect}</p>
-      </div>
+      {/* Bottom progress bar */}
+      {pair && uiConfig.progressStyle !== 'hidden' && (
+        <footer className="flex-none py-3 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
+          {uiConfig.progressStyle === 'dots' ? (
+            <ProgressDots
+              completed={pair.progress.completed}
+              target={pair.progress.target}
+              themeColor={uiConfig.themeColor}
+            />
+          ) : (
+            <div className="w-full max-w-xs mx-auto px-4">
+              <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500 ease-out"
+                  style={{
+                    width: `${pair.progress.percentage}%`,
+                    backgroundColor: uiConfig.themeColor,
+                  }}
+                />
+              </div>
+            </div>
+          )}
+          {uiConfig.showCounts && (
+            <p className="text-center text-xs text-slate-400 mt-1">
+              {pair.progress.completed} {t.of} {pair.progress.target}
+            </p>
+          )}
+        </footer>
+      )}
+
+      {/* Checkpoint toast */}
+      {checkpointMessage && <CheckpointToast message={checkpointMessage} />}
     </div>
   );
 }
@@ -620,10 +1006,10 @@ function VotingPageContent() {
 export default function VotingPage() {
   return (
     <Suspense fallback={
-      <div className="min-h-[100dvh] flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-950">
+      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-50">
         <div className="text-center">
           <div className="w-10 h-10 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="mt-4 text-slate-500 text-sm">Nalaganje...</p>
+          <p className="mt-4 text-slate-400 text-sm">Nalaganje...</p>
         </div>
       </div>
     }>

@@ -1,8 +1,7 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Image from 'next/image';
 
 interface Study {
   id: string;
@@ -11,9 +10,10 @@ interface Study {
   language: string;
   logoUrls: string[];
   requireAccessCode: boolean;
+  uiThemeColor?: string;
 }
 
-// Slovenian translations
+// Translations
 const translations = {
   sl: {
     enterCode: 'Vnesite svojo kodo za dostop',
@@ -62,6 +62,15 @@ export default function StudyEntryPage() {
 
   const lang = (study?.language || 'en') as keyof typeof translations;
   const t = translations[lang] || translations.en;
+
+  const themeColor = study?.uiThemeColor || '#2563EB';
+
+  // Find Izvrstna logo if available
+  const primaryLogoUrl = useMemo(() => {
+    if (!study?.logoUrls?.length) return null;
+    const izvrstna = study.logoUrls.find((l) => l.toLowerCase().includes('izvrstna'));
+    return `/logos/${izvrstna || study.logoUrls[0]}`;
+  }, [study]);
 
   useEffect(() => {
     // Check for existing session
@@ -133,10 +142,13 @@ export default function StudyEntryPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-slate-500">{t.loading}</p>
+          <div
+            className="w-10 h-10 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+            style={{ borderColor: '#2563EB', borderTopColor: 'transparent' }}
+          />
+          <p className="mt-4 text-slate-400 text-sm">{t.loading}</p>
         </div>
       </div>
     );
@@ -144,26 +156,26 @@ export default function StudyEntryPage() {
 
   if (!study) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-slate-50 to-slate-100">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-center">
-          <h1 className="text-2xl font-bold text-red-600">{error || t.studyNotFound}</h1>
+          <h1 className="text-xl font-semibold text-red-500">{error || t.studyNotFound}</h1>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-b from-slate-50 to-slate-100">
+    <div className="min-h-screen flex flex-col bg-slate-50">
       {/* Header with logos */}
-      <header className="p-6">
-        <div className="max-w-4xl mx-auto flex items-center justify-center gap-6 flex-wrap">
+      <header className="pt-8 pb-4 px-6">
+        <div className="max-w-4xl mx-auto flex items-center justify-center gap-8 flex-wrap">
           {study.logoUrls?.map((logo, idx) => (
-            <div key={idx} className="relative h-16 w-auto">
+            <div key={idx} className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={`/logos/${logo}`}
                 alt="Logo"
-                className="h-16 w-auto object-contain"
+                className="h-20 sm:h-24 w-auto object-contain"
               />
             </div>
           ))}
@@ -171,20 +183,20 @@ export default function StudyEntryPage() {
       </header>
 
       {/* Main content */}
-      <main className="flex-1 flex items-center justify-center p-6">
+      <main className="flex-1 flex items-center justify-center px-6 pb-6">
         <div className="w-full max-w-md">
-          <div className="bg-white border border-slate-200 rounded-2xl p-8 shadow-lg">
+          <div className="bg-white rounded-2xl p-8 shadow-lg shadow-slate-200/50 border border-slate-100">
             <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold text-slate-900 mb-2">{study.title}</h1>
-              <p className="text-slate-600">{study.description}</p>
+              <h1 className="text-2xl font-bold text-slate-900 mb-3">{study.title}</h1>
+              <p className="text-slate-500 leading-relaxed">{study.description}</p>
             </div>
 
             {study.requireAccessCode ? (
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
                   <label
                     htmlFor="code"
-                    className="block text-sm font-medium text-slate-700 mb-2"
+                    className="block text-sm font-medium text-slate-600 mb-2"
                   >
                     {t.enterCode}
                   </label>
@@ -194,7 +206,8 @@ export default function StudyEntryPage() {
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     placeholder={t.codePlaceholder}
-                    className="w-full px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center font-mono text-lg bg-white text-slate-900"
+                    className="w-full px-4 py-3.5 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:border-transparent text-center font-mono text-lg bg-slate-50 text-slate-900 placeholder:text-slate-300"
+                    style={{ focusRingColor: themeColor } as any}
                     disabled={isSubmitting}
                     autoComplete="off"
                     autoFocus
@@ -202,7 +215,7 @@ export default function StudyEntryPage() {
                 </div>
 
                 {error && (
-                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm text-center">
+                  <div className="p-3 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm text-center">
                     {error}
                   </div>
                 )}
@@ -210,16 +223,25 @@ export default function StudyEntryPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting || !code.trim()}
-                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full py-3.5 text-white rounded-xl font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
+                  style={{ backgroundColor: themeColor }}
                 >
-                  {isSubmitting ? t.verifying : t.submit}
+                  {isSubmitting ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      {t.verifying}
+                    </span>
+                  ) : (
+                    t.submit
+                  )}
                 </button>
               </form>
             ) : (
               <button
                 onClick={handleSubmit}
                 disabled={isSubmitting}
-                className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                className="w-full py-3.5 text-white rounded-xl font-semibold transition-all disabled:opacity-50 active:scale-[0.98]"
+                style={{ backgroundColor: themeColor }}
               >
                 {isSubmitting ? t.verifying : t.submit}
               </button>
@@ -229,13 +251,14 @@ export default function StudyEntryPage() {
       </main>
 
       {/* Footer */}
-      <footer className="p-6 text-center text-sm text-slate-500">
+      <footer className="py-6 text-center text-xs text-slate-400">
         {t.poweredBy}{' '}
         <a
           href="https://scaientist.com"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-blue-600 hover:underline"
+          className="hover:underline"
+          style={{ color: themeColor }}
         >
           ScAIentist
         </a>

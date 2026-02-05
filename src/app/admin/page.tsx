@@ -495,6 +495,9 @@ function StudyCard({
             </div>
           </div>
 
+          {/* UI Customization */}
+          <UICustomizationPanel studyId={study.id} />
+
           {/* Actions */}
           <div className="mt-6 pt-4 border-t flex flex-wrap gap-3">
             <Link
@@ -517,6 +520,180 @@ function StudyCard({
             >
               Export Rankings (JSON) ↗
             </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UICustomizationPanel({ studyId }: { studyId: string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [config, setConfig] = useState({
+    uiThemeColor: '#2563EB',
+    uiLogoPosition: 'top-center',
+    uiProgressStyle: 'dots',
+    uiShowCounts: false,
+    uiVoteAnimation: 'thumbs-up',
+    uiCategoryStyle: 'gallery',
+  });
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && !loaded) {
+      fetch(`/api/studies/${studyId}`)
+        .then((r) => r.json())
+        .then((data) => {
+          setConfig({
+            uiThemeColor: data.uiThemeColor || '#2563EB',
+            uiLogoPosition: data.uiLogoPosition || 'top-center',
+            uiProgressStyle: data.uiProgressStyle || 'dots',
+            uiShowCounts: data.uiShowCounts ?? false,
+            uiVoteAnimation: data.uiVoteAnimation || 'thumbs-up',
+            uiCategoryStyle: data.uiCategoryStyle || 'gallery',
+          });
+          setLoaded(true);
+        })
+        .catch(() => setLoaded(true));
+    }
+  }, [isOpen, loaded, studyId]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/studies/${studyId}/ui-config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-6 pt-4 border-t">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground"
+      >
+        <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+        UI Customization
+        <span className="text-xs text-muted-foreground font-normal">(participant voting experience)</span>
+      </button>
+
+      {isOpen && (
+        <div className="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3 bg-background rounded-lg p-4 border">
+          {/* Theme Color */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Theme Color</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={config.uiThemeColor}
+                onChange={(e) => setConfig({ ...config, uiThemeColor: e.target.value })}
+                className="w-8 h-8 rounded border cursor-pointer"
+              />
+              <input
+                type="text"
+                value={config.uiThemeColor}
+                onChange={(e) => setConfig({ ...config, uiThemeColor: e.target.value })}
+                className="flex-1 px-2 py-1.5 border rounded text-sm font-mono bg-background"
+                placeholder="#2563EB"
+              />
+            </div>
+          </div>
+
+          {/* Logo Position */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Logo Position</label>
+            <select
+              value={config.uiLogoPosition}
+              onChange={(e) => setConfig({ ...config, uiLogoPosition: e.target.value })}
+              className="w-full px-2 py-1.5 border rounded text-sm bg-background"
+            >
+              <option value="top-center">Top Center</option>
+              <option value="top-left">Top Left</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </div>
+
+          {/* Progress Style */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Progress Style</label>
+            <select
+              value={config.uiProgressStyle}
+              onChange={(e) => setConfig({ ...config, uiProgressStyle: e.target.value })}
+              className="w-full px-2 py-1.5 border rounded text-sm bg-background"
+            >
+              <option value="dots">Dots / Milestones</option>
+              <option value="bar">Simple Bar</option>
+              <option value="hidden">Hidden</option>
+            </select>
+          </div>
+
+          {/* Vote Animation */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Vote Animation</label>
+            <select
+              value={config.uiVoteAnimation}
+              onChange={(e) => setConfig({ ...config, uiVoteAnimation: e.target.value })}
+              className="w-full px-2 py-1.5 border rounded text-sm bg-background"
+            >
+              <option value="thumbs-up">Thumbs Up</option>
+              <option value="checkmark">Checkmark</option>
+              <option value="border-only">Border Only</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+
+          {/* Category Style */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Category Style</label>
+            <select
+              value={config.uiCategoryStyle}
+              onChange={(e) => setConfig({ ...config, uiCategoryStyle: e.target.value })}
+              className="w-full px-2 py-1.5 border rounded text-sm bg-background"
+            >
+              <option value="gallery">Gallery (Thumbnails)</option>
+              <option value="list">List</option>
+              <option value="cards">Cards</option>
+            </select>
+          </div>
+
+          {/* Show Counts */}
+          <div className="flex items-center gap-2 self-end pb-1">
+            <input
+              type="checkbox"
+              id={`showCounts-${studyId}`}
+              checked={config.uiShowCounts}
+              onChange={(e) => setConfig({ ...config, uiShowCounts: e.target.checked })}
+              className="rounded border"
+            />
+            <label htmlFor={`showCounts-${studyId}`} className="text-sm text-muted-foreground">
+              Show numeric counts (X/Y)
+            </label>
+          </div>
+
+          {/* Save button */}
+          <div className="md:col-span-2 lg:col-span-3 flex justify-end pt-2">
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+            >
+              {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save UI Settings'}
+            </button>
           </div>
         </div>
       )}

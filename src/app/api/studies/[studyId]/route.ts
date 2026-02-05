@@ -31,6 +31,13 @@ export async function GET(
         hasCategorySeparation: true,
         isActive: true,
         comparisonsPerParticipant: true,
+        // UI Customization
+        uiThemeColor: true,
+        uiLogoPosition: true,
+        uiProgressStyle: true,
+        uiShowCounts: true,
+        uiVoteAnimation: true,
+        uiCategoryStyle: true,
         categories: {
           select: {
             id: true,
