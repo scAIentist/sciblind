@@ -1,10 +1,10 @@
 /**
- * UI Config API
+ * Study Config API
  *
  * PATCH /api/admin/studies/[studyId]/ui-config
  *
- * Updates the UI customization settings for a study.
- * These settings control the participant voting experience appearance.
+ * Updates the UI customization and behavioral settings for a study.
+ * These settings control the participant voting experience.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -95,6 +95,11 @@ export async function PATCH(
       updateData.uiShowCounts = Boolean(body.uiShowCounts);
     }
 
+    // Behavioral settings
+    if (body.allowContinuedVoting !== undefined) {
+      updateData.allowContinuedVoting = Boolean(body.allowContinuedVoting);
+    }
+
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
         { error: 'No valid fields to update' },
@@ -114,6 +119,7 @@ export async function PATCH(
         uiShowCounts: true,
         uiVoteAnimation: true,
         uiCategoryStyle: true,
+        allowContinuedVoting: true,
       },
     });
 
