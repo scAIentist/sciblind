@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-05 (v3 — Admin Auth, Performance, UI Polish)
+> Last Updated: 2026-02-05 (v4 — Checkpoint Interstitials, Study Settings Admin)
 
 ## Project Overview
 
@@ -30,8 +30,8 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 | Rankings API | Complete | Admin/participant access control, sensitive field stripping |
 | Audit Export API | Complete | Full comparison log with metadata, JSON format |
 | Activity Logging | Complete | Immutable append-only log for all portal activity |
-| Participant UI | Complete | MKBHD-inspired design, fire-and-forget voting, smooth transitions |
-| Admin Dashboard | Complete | Real-time stats, rankings, session tracking, activity log viewer |
+| Participant UI | Complete | MKBHD-inspired design, fire-and-forget voting, checkpoint interstitials |
+| Admin Dashboard | Complete | Real-time stats, rankings, session tracking, study settings, activity log |
 | Admin Login Page | Complete | Password auth at /admin/login, rate-limited |
 | Security | Complete | Rate limiting, input validation, security headers, admin middleware |
 | Images | Complete | Compressed WebP format, uploaded to Supabase Storage |
@@ -179,6 +179,8 @@ The voting page is optimized for perceived instant response:
 
 **Title**: IzVRS Likovni natečaj 2025
 
+**Key Settings**: `allowContinuedVoting=false` (stops at threshold), `uiShowCounts=false`
+
 **Description**: Slepo primerjanje likovnih del učencev za izbor najboljših 12, ki bodo natisnjeni na sledilnikih. Pomagajte nam pri izboru!
 
 **Participant URL**: https://blind.scaientist.eu/study/cml808mzc0000m104un333c69
@@ -235,7 +237,7 @@ The voting page is optimized for perceived instant response:
 | `/api/admin/dashboard` | GET | Global stats, all studies overview |
 | `/api/admin/studies/[studyId]` | GET | Detailed study info, rankings, sessions |
 | `/api/admin/studies/[studyId]/export` | GET | Full audit export (JSON) with all comparisons |
-| `/api/admin/studies/[studyId]/ui-config` | PATCH | Update UI customization settings |
+| `/api/admin/studies/[studyId]/ui-config` | PATCH | Update UI customization + behavioral settings (incl. `allowContinuedVoting`) |
 | `/api/admin/activity-log` | GET | Activity log with filtering (studyId, sessionId, action, limit, offset) |
 
 ### Public APIs (with access control)
@@ -341,6 +343,7 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `scripts/simulate-next-pair.ts` | Simulate matchmaking for debugging |
 | `scripts/add-test-code.ts` | Add test access code |
 | `scripts/update-study-text.ts` | Update study text/description |
+| `scripts/update-izvrs-settings.ts` | Update IzVRS study: allowContinuedVoting=false, uiShowCounts=true |
 
 ### Tests
 
@@ -417,8 +420,10 @@ NEXTAUTH_SECRET=e5c5tUa1IQFMMbDor8QibeJuX4ufd9wABrUtjaPYzm8
 NEXTAUTH_URL=https://blind.scaientist.eu
 NEXT_PUBLIC_APP_URL=https://blind.scaientist.eu
 IP_SALT=d34945fe5fe5387f8f5e074597037676dbd2df398d5507021ee52331c41c4d17
-ADMIN_SECRET=sBL1ND-adm!n-8f3Kx7Wq2Rv9Tp4YmNjE6cHs
+ADMIN_SECRET=<configured in Vercel — different from local .env for security>
 ```
+
+**Note**: The production `ADMIN_SECRET` is set directly in Vercel environment variables and differs from the local `.env` file. Use the admin dashboard UI at `/admin` to manage study settings on production.
 
 ### Domain Setup
 
@@ -485,22 +490,39 @@ The voting page (`src/app/study/[studyId]/vote/page.tsx`) uses a design inspired
 - **Side-by-side images** (desktop): two columns with gap
 - **Stacked images** (mobile): single column, tap to select
 - **Vote animation**: thumbs-up icon with scale-up effect (400ms)
-- **Progress indicator**: dot-based progress for categories
+- **Progress bar**: milestone bar with dots at 25/50/75/100% + always-visible `X / Y` counter
 - **Image transitions**: opacity-based fade (no flash of empty content)
 - **Category selection**: thumbnail grid with skeleton shimmer while loading
+- **Checkpoint interstitials**: full-screen pause at 25/50/75/100% with circular SVG progress ring, explanation of why the checkpoint exists, and Continue button. Images preloaded during checkpoint via `pendingPairData` state.
 
-### UI Customization (per study)
+### Checkpoint Interstitials (v4)
 
-Configurable via admin API (`PATCH /api/admin/studies/[studyId]/ui-config`):
+At 25%, 50%, 75%, and 100% of target comparisons per category, voting pauses with a full-screen checkpoint screen:
 
-| Field | Options | Default |
-|-------|---------|---------|
-| `uiThemeColor` | Any hex color (#RRGGBB) | - |
-| `uiLogoPosition` | `top-center`, `top-left`, `hidden` | `top-center` |
-| `uiProgressStyle` | `dots`, `bar`, `hidden` | `dots` |
-| `uiShowCounts` | `true`/`false` | `false` |
-| `uiVoteAnimation` | `thumbs-up`, `checkmark`, `border-only`, `none` | `thumbs-up` |
-| `uiCategoryStyle` | `gallery`, `list`, `cards` | `gallery` |
+- **Circular SVG progress ring** showing percentage completed
+- **Title + body text** explaining why the checkpoint exists (scientific threshold explanation)
+- **Completed / target counter** (e.g., "12 / 49")
+- **Continue button** to resume voting
+- **Bilingual** (Slovenian + English) checkpoint messages
+- Next pair is **preloaded in background** during checkpoint display (`pendingPairData` state)
+- When Continue is clicked, the preloaded pair displays **instantly** (no loading delay)
+- View state machine: `loading → categories → voting ↔ checkpoint → categoryDone → complete`
+
+### Study Settings (per study, admin panel)
+
+Configurable via admin dashboard "Study Settings" panel or API (`PATCH /api/admin/studies/[studyId]/ui-config`):
+
+| Field | Options | Default | Category |
+|-------|---------|---------|----------|
+| `uiThemeColor` | Any hex color (#RRGGBB) | - | UI |
+| `uiLogoPosition` | `top-center`, `top-left`, `hidden` | `top-center` | UI |
+| `uiProgressStyle` | `dots`, `bar`, `hidden` | `dots` | UI |
+| `uiShowCounts` | `true`/`false` | `false` | UI |
+| `uiVoteAnimation` | `thumbs-up`, `checkmark`, `border-only`, `none` | `thumbs-up` | UI |
+| `uiCategoryStyle` | `gallery`, `list`, `cards` | `gallery` | UI |
+| `allowContinuedVoting` | `true`/`false` | `true` | Behavior |
+
+**Note**: When `allowContinuedVoting` is `false`, voting stops once the scientific threshold is met per category. The IzVRS study has this set to `false`.
 
 ### Category Thumbnails (Gallery Style)
 
@@ -611,10 +633,12 @@ Returns per study: `dataStatus`, `isPublishable`, `publishableThreshold` details
 - Algorithm version stored per comparison for reproducibility
 
 ### Threshold-Aware UI
+- **Checkpoint interstitials** at 25/50/75/100% of target with full-screen pause, progress ring, and explanation
 - When category completes: shows threshold status message
-- If threshold NOT met: "Your comparisons are valuable for reliability" + continue option
+- If `allowContinuedVoting=true` and threshold NOT met: "Your comparisons are valuable for reliability" + continue option
+- If `allowContinuedVoting=false` (IzVRS): voting stops at threshold, no continue option
 - If threshold met: "Results are sufficiently reliable" + proceed to next category
-- Bilingual (sl/en) translations
+- Bilingual (sl/en) translations for all checkpoint and completion messages
 
 ### Automated Tests
 - **80 tests** across 4 test suites (Vitest)
@@ -658,6 +682,10 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `1cf69ce` | Admin auth, rankings access control, and rate limiting |
 | `4ecea9a` | Pipeline vote->prefetch->preload for near-instant pair transitions |
 | `1ddfffc` | Fire-and-forget voting, skeleton thumbnails, smooth transitions |
+| `566854e` | Comprehensive CLAUDE.md update (v3) |
+| `8a725c9` | Full-screen checkpoint interstitials, progress bar with counter |
+| `64a8ecc` | Add allowContinuedVoting to study config API |
+| `2fc1e44` | Add allowContinuedVoting toggle to admin Study Settings panel |
 
 ## Known Issues & Fixes
 
@@ -690,6 +718,17 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 - Database `imageKey` fields updated (e.g., "izvrs/3-razredi/1.webp")
 - Seed script updated for new studies
 - Migration script: `npx tsx scripts/migrate-to-webp.ts`
+
+### Checkpoint Interstitials & Progress Bar Overhaul (2026-02-05)
+**Problem**: Motivational checkpoint toasts were tiny and barely visible. Progress bar didn't show counts. `allowContinuedVoting` couldn't be changed without direct DB access.
+
+**Fix** (commits `8a725c9`, `64a8ecc`, `2fc1e44`):
+- Replaced `CheckpointToast` with full-screen `CheckpointScreen` component
+- Added `pendingPairData` state for preloading next pair during checkpoint display
+- Replaced `ProgressDots` with `ProgressBar` that always shows `X / Y` counter + milestone dots
+- Added `allowContinuedVoting` toggle to admin "Study Settings" panel
+- Added `allowContinuedVoting` to PATCH `/api/admin/studies/[studyId]/ui-config` API
+- IzVRS study configured with `allowContinuedVoting=false` (stops at scientific threshold)
 
 ### Performance Optimizations (2026-02-05)
 **Problem**: 3-second load times, 1s lag after vote, thumbnail flash on category page.
