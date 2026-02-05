@@ -57,7 +57,11 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(study);
+    return NextResponse.json(study, {
+      headers: {
+        'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600',
+      },
+    });
   } catch (error) {
     console.error('Study fetch error:', error);
     return NextResponse.json(

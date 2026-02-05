@@ -93,13 +93,24 @@ export async function POST(
       );
     }
 
-    // Get session
-    const session = await prisma.session.findUnique({
-      where: { token },
-      include: {
-        study: true,
-      },
-    });
+    // Fetch session + both items in parallel (3 queries → 1 round-trip)
+    const [session, itemA, itemB] = await Promise.all([
+      prisma.session.findUnique({
+        where: { token },
+        include: {
+          study: {
+            select: {
+              id: true,
+              hasCategorySeparation: true,
+              eloKFactor: true,
+              adaptiveKFactor: true,
+            },
+          },
+        },
+      }),
+      prisma.item.findUnique({ where: { id: itemAId } }),
+      prisma.item.findUnique({ where: { id: itemBId } }),
+    ]);
 
     if (!session) {
       return NextResponse.json(
@@ -121,12 +132,6 @@ export async function POST(
         { status: 400, headers: rateLimitHeaders }
       );
     }
-
-    // Get items
-    const [itemA, itemB] = await Promise.all([
-      prisma.item.findUnique({ where: { id: itemAId } }),
-      prisma.item.findUnique({ where: { id: itemBId } }),
-    ]);
 
     if (!itemA || !itemB) {
       return NextResponse.json(
@@ -152,8 +157,8 @@ export async function POST(
       }
     }
 
-    // Check for duplicate comparison (within this session)
-    const existingComparison = await prisma.comparison.findFirst({
+    // Check for duplicate comparison — use count instead of findFirst for speed
+    const duplicateCount = await prisma.comparison.count({
       where: {
         sessionId: session.id,
         OR: [
@@ -163,7 +168,7 @@ export async function POST(
       },
     });
 
-    if (existingComparison) {
+    if (duplicateCount > 0) {
       return NextResponse.json(
         { error: 'This pair has already been compared', errorKey: 'DUPLICATE_COMPARISON' },
         { status: 400, headers: rateLimitHeaders }

@@ -51,3 +51,7 @@ next-env.d.ts
 
 # uploads (local development)
 /public/uploads
+
+# sensitive study files (contain access codes and secrets)
+izvrs-access-codes.txt
+IzVRS-Study-Links.txt

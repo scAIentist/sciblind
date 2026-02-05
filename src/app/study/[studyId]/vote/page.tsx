@@ -115,7 +115,7 @@ const translations = {
 // ========== Constants ==========
 
 const SUPABASE_STORAGE_URL = 'https://rdsozrebfjjoknqonvbk.supabase.co/storage/v1/object/public/izvrs-images';
-const VOTE_ANIMATION_DURATION = 700; // ms before transitioning to next pair
+const VOTE_ANIMATION_DURATION = 500; // ms before transitioning to next pair
 const CHECKPOINT_PERCENTAGES = [25, 50, 75, 100];
 
 // Default UI config (IzVRS-style)
@@ -357,15 +357,23 @@ function VotingPageContent() {
     return '/placeholder.webp';
   }, []);
 
-  // Preload images
-  const preloadImage = useCallback((url: string) => {
-    const img = new Image();
-    img.src = url;
+  // Preload images — returns a promise that resolves when both are loaded (or after timeout)
+  const preloadImage = useCallback((url: string): Promise<void> => {
+    return new Promise((resolve) => {
+      const img = new window.Image();
+      img.onload = () => resolve();
+      img.onerror = () => resolve(); // Don't block on error
+      img.src = url;
+      // Don't wait forever — resolve after 3s max
+      setTimeout(resolve, 3000);
+    });
   }, []);
 
-  const preloadPairImages = useCallback((pairData: PairData) => {
-    preloadImage(getImageUrl(pairData.itemA));
-    preloadImage(getImageUrl(pairData.itemB));
+  const preloadPairImages = useCallback((pairData: PairData): Promise<void> => {
+    return Promise.all([
+      preloadImage(getImageUrl(pairData.itemA)),
+      preloadImage(getImageUrl(pairData.itemB)),
+    ]).then(() => {});
   }, [getImageUrl, preloadImage]);
 
   // Fetch category thumbnails
@@ -539,50 +547,114 @@ function VotingPageContent() {
     voteInProgressRef.current = true;
     setSelectedWinnerId(winnerId);
     setShowVoteAnimation(true);
+    setIsVoting(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    // Show animation first, then submit
-    setTimeout(async () => {
-      setIsVoting(true);
-      try {
-        const [voteRes] = await Promise.all([
-          fetch(`/api/participate/${studyId}/vote`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              sessionToken: token,
-              itemAId: pair.itemA.id,
-              itemBId: pair.itemB.id,
-              winnerId,
-              leftItemId: pair.leftItemId,
-              rightItemId: pair.rightItemId,
-              categoryId: currentCategoryId,
-              responseTimeMs,
-            }),
-          }),
-        ]);
+    // Pipeline: animation + vote + prefetch all overlap
+    // 1. Start animation timer
+    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
 
-        if (!voteRes.ok) {
-          const data = await voteRes.json();
-          throw new Error(data.error);
-        }
+    // 2. Fire vote submission immediately (runs during animation)
+    const votePromise = fetch(`/api/participate/${studyId}/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionToken: token,
+        itemAId: pair.itemA.id,
+        itemBId: pair.itemB.id,
+        winnerId,
+        leftItemId: pair.leftItemId,
+        rightItemId: pair.rightItemId,
+        categoryId: currentCategoryId,
+        responseTimeMs,
+      }),
+    });
 
-        // Reset animation state before fetching next
-        setSelectedWinnerId(null);
-        setShowVoteAnimation(false);
-
-        await fetchNextPair(currentCategoryId || undefined);
-
-      } catch (err: any) {
-        setSelectedWinnerId(null);
-        setShowVoteAnimation(false);
-        setError(err.message || t.error);
-      } finally {
-        setIsVoting(false);
-        voteInProgressRef.current = false;
+    try {
+      // 3. As soon as vote succeeds, fire next-pair fetch (still during animation)
+      const voteRes = await votePromise;
+      if (!voteRes.ok) {
+        const data = await voteRes.json();
+        throw new Error(data.error);
       }
-    }, VOTE_ANIMATION_DURATION);
-  }, [pair, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error]);
+
+      // 4. Start fetching next pair immediately (don't wait for animation)
+      const nextPairUrl = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
+      nextPairUrl.searchParams.set('token', token!);
+      if (currentCategoryId) nextPairUrl.searchParams.set('categoryId', currentCategoryId);
+      const nextPairPromise = fetch(nextPairUrl.toString()).then(r => r.json());
+
+      // 5. Wait for BOTH animation and next-pair data
+      const [, nextData] = await Promise.all([animationDone, nextPairPromise]);
+
+      // Reset animation
+      setSelectedWinnerId(null);
+      setShowVoteAnimation(false);
+
+      // Process the prefetched next-pair response
+      if (nextData.error) {
+        if (nextData.errorKey === 'INVALID_SESSION') {
+          localStorage.removeItem(`sciblind-session-${studyId}`);
+          router.replace(`/study/${studyId}`);
+          return;
+        }
+        throw new Error(nextData.error);
+      }
+
+      if (nextData.requiresCategorySelection) {
+        setCategories(nextData.categories);
+        setViewState('categories');
+        return;
+      }
+
+      if (nextData.complete || nextData.allCategoriesComplete) {
+        setViewState('complete');
+        return;
+      }
+
+      if (nextData.categoryComplete) {
+        if (nextData.allowContinuedVoting) {
+          setCategoryDoneInfo({
+            categoryId: nextData.categoryId,
+            thresholdMet: nextData.thresholdMet || false,
+            allowContinuedVoting: true,
+          });
+          setViewState('categoryDone');
+          return;
+        }
+        // Need to re-fetch for category selection
+        const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
+        const catData = await catRes.json();
+        if (catData.requiresCategorySelection) {
+          setCategories(catData.categories);
+        }
+        setViewState('categories');
+        return;
+      }
+
+      // 6. Preload images for the next pair (should be near-instant if cached)
+      await preloadPairImages(nextData);
+
+      // 7. Swap to next pair — images are already in browser cache, so instant
+      setPair(nextData);
+      setCurrentCategoryId(nextData.categoryId);
+      startTimeRef.current = Date.now();
+      setViewState('voting');
+
+      // Check for checkpoints
+      checkForCheckpoint(nextData.progress.completed, nextData.progress.target);
+
+    } catch (err: any) {
+      setSelectedWinnerId(null);
+      setShowVoteAnimation(false);
+      if (err.name !== 'AbortError') {
+        setError(err.message || t.error);
+      }
+    } finally {
+      setIsVoting(false);
+      voteInProgressRef.current = false;
+    }
+  }, [pair, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router, preloadPairImages, checkForCheckpoint]);
 
   function selectCategory(categoryId: string) {
     setCurrentCategoryId(categoryId);

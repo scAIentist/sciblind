@@ -88,7 +88,7 @@ export async function GET(
       );
     }
 
-    // Get session with study
+    // Get session with study — only select needed comparison fields for performance
     const session = await prisma.session.findUnique({
       where: { token: sessionToken },
       include: {
@@ -99,7 +99,17 @@ export async function GET(
             },
           },
         },
-        comparisons: true,
+        comparisons: {
+          select: {
+            id: true,
+            itemAId: true,
+            itemBId: true,
+            winnerId: true,
+            categoryId: true,
+            isFlagged: true,
+            flagReason: true,
+          },
+        },
       },
     });
 
@@ -144,31 +154,31 @@ export async function GET(
         }
         targetCategoryId = categoryId;
       } else {
-        // Return category list for selection
-        const categoryProgress = await Promise.all(
-          study.categories.map(async (cat) => {
-            const catItems = await prisma.item.findMany({
-              where: { studyId, categoryId: cat.id },
-            });
-            const targetComparisons = calculateRecommendedComparisons(catItems.length, 5);
-            const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
-            const progress = getCategoryProgress(session.comparisons, cat.id, targetComparisons);
-            const catCoverage = hasFullCoverage(catItems, catComparisons);
+        // Return category list — single query for ALL items instead of N per-category queries
+        const allItems = await prisma.item.findMany({
+          where: { studyId },
+          select: { id: true, categoryId: true },
+        });
 
-            // Override isComplete: require both target AND coverage
-            const isComplete = progress.completed >= targetComparisons && catCoverage;
+        const categoryProgress = study.categories.map((cat) => {
+          const catItems = allItems.filter((i) => i.categoryId === cat.id);
+          const targetComparisons = calculateRecommendedComparisons(catItems.length, 5);
+          const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
+          const progress = getCategoryProgress(session.comparisons as any, cat.id, targetComparisons);
+          const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
 
-            return {
-              id: cat.id,
-              name: cat.name,
-              slug: cat.slug,
-              displayOrder: cat.displayOrder,
-              itemCount: catItems.length,
-              ...progress,
-              isComplete,
-            };
-          })
-        );
+          const isComplete = progress.completed >= targetComparisons && catCoverage;
+
+          return {
+            id: cat.id,
+            name: cat.name,
+            slug: cat.slug,
+            displayOrder: cat.displayOrder,
+            itemCount: catItems.length,
+            ...progress,
+            isComplete,
+          };
+        });
 
         return NextResponse.json(
           {
@@ -206,7 +216,9 @@ export async function GET(
     const targetComparisons = calculateRecommendedComparisons(items.length, 5);
 
     // Check full coverage: every item must have been shown at least once
-    const coverageAchieved = hasFullCoverage(items, sessionComparisons);
+    // Note: sessionComparisons has partial Comparison fields from select optimization,
+    // but hasFullCoverage/selectNextPair only use itemAId, itemBId, categoryId, winnerId
+    const coverageAchieved = hasFullCoverage(items, sessionComparisons as any);
 
     // Category is complete ONLY if BOTH conditions are met:
     // 1. Reached target number of comparisons
@@ -249,19 +261,20 @@ export async function GET(
         },
       );
 
-      // Check if all categories are complete
+      // Check if all categories are complete — single query for all items
       if (study.hasCategorySeparation) {
-        const allComplete = await Promise.all(
-          study.categories.map(async (cat) => {
-            const catItems = await prisma.item.findMany({
-              where: { studyId, categoryId: cat.id },
-            });
-            const catTarget = calculateRecommendedComparisons(catItems.length, 5);
-            const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
-            const catCoverage = hasFullCoverage(catItems, catComparisons);
-            return catComparisons.length >= catTarget && catCoverage;
-          })
-        );
+        const allStudyItems = await prisma.item.findMany({
+          where: { studyId },
+          select: { id: true, categoryId: true },
+        });
+
+        const allComplete = study.categories.map((cat) => {
+          const catItems = allStudyItems.filter((i) => i.categoryId === cat.id);
+          const catTarget = calculateRecommendedComparisons(catItems.length, 5);
+          const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
+          const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
+          return catComparisons.length >= catTarget && catCoverage;
+        });
 
         if (allComplete.every(Boolean)) {
           await prisma.session.update({
@@ -309,8 +322,8 @@ export async function GET(
       );
     }
 
-    // Select next pair
-    const pair = selectNextPair(items, sessionComparisons);
+    // Select next pair (cast for partial Comparison type from select optimization)
+    const pair = selectNextPair(items, sessionComparisons as any);
 
     if (!pair) {
       // No more pairs available (all exhausted)
