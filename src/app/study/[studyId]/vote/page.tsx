@@ -53,6 +53,19 @@ interface CheckpointInfo {
   target: number;
 }
 
+interface PersonalRankingItem {
+  id: string;
+  externalId?: string;
+  imageUrl: string | null;
+  wins: number;
+}
+
+interface CategoryRanking {
+  categoryId: string;
+  categoryName: string;
+  topItems: PersonalRankingItem[];
+}
+
 // ========== Translations ==========
 
 const translations = {
@@ -93,6 +106,10 @@ const translations = {
     checkpointContinue: 'Naprej',
     checkpointMinExplanation: 'Minimalni prag za zanesljive rezultate',
     checkpointProgress: 'primerjav opravljenih',
+    // Personal rankings
+    yourTopPicks: 'Vaši najboljši izbori',
+    yourTopPicksDesc: 'Na podlagi vaših primerjav so to dela, ki ste jih najpogosteje izbrali:',
+    loadingRankings: 'Nalaganje vaših rezultatov...',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -131,6 +148,10 @@ const translations = {
     checkpointContinue: 'Continue',
     checkpointMinExplanation: 'Minimum threshold for reliable results',
     checkpointProgress: 'comparisons completed',
+    // Personal rankings
+    yourTopPicks: 'Your Top Picks',
+    yourTopPicksDesc: 'Based on your comparisons, these are the items you selected most often:',
+    loadingRankings: 'Loading your results...',
   },
 };
 
@@ -184,6 +205,10 @@ function preloadPairImages(pairData: PairData): Promise<void> {
 // ========== Progress Bar Component ==========
 
 function ProgressBar({ completed, target, themeColor }: { completed: number; target: number; themeColor: string }) {
+  // Show "current step" (completed + 1) since user is currently viewing this comparison
+  // After voting, API returns updated completed count, so this always shows current position
+  const currentStep = completed + 1;
+  const displayStep = Math.min(currentStep, target); // Don't show more than target
   const percentage = target > 0 ? Math.min(100, Math.round((completed / target) * 100)) : 0;
 
   return (
@@ -210,9 +235,9 @@ function ProgressBar({ completed, target, themeColor }: { completed: number; tar
           />
         ))}
       </div>
-      {/* Always show counter below bar */}
+      {/* Show current step number (korak X) */}
       <p className="text-center text-xs text-slate-400 mt-2">
-        {completed} / {target}
+        {displayStep} / {target}
       </p>
     </div>
   );
@@ -409,6 +434,9 @@ function VotingPageContent() {
   const [pendingPairData, setPendingPairData] = useState<PairData | null>(null);
   // Image transition: 0 = faded out, 1 = visible
   const [imagesReady, setImagesReady] = useState(false);
+  // Personal rankings for complete screen
+  const [personalRankings, setPersonalRankings] = useState<CategoryRanking[]>([]);
+  const [rankingsLoading, setRankingsLoading] = useState(false);
 
   useEffect(() => { setIsHydrated(true); }, []);
 
@@ -459,6 +487,20 @@ function VotingPageContent() {
     } catch { /* non-critical */ }
     setThumbnailsLoading(false);
   }, [studyId]);
+
+  // Fetch personal rankings when session is complete
+  const fetchPersonalRankings = useCallback(async () => {
+    if (!token) return;
+    setRankingsLoading(true);
+    try {
+      const res = await fetch(`/api/participate/${studyId}/personal-rankings?token=${token}`);
+      if (res.ok) {
+        const data = await res.json();
+        setPersonalRankings(data.rankings || []);
+      }
+    } catch { /* non-critical */ }
+    setRankingsLoading(false);
+  }, [studyId, token]);
 
   // ===== fetchNextPair — used for initial load and category selection =====
   async function fetchNextPair(categoryId?: string, signal?: AbortSignal) {
@@ -577,6 +619,13 @@ function VotingPageContent() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewState, pair, isVoting, showVoteAnimation]);
+
+  // Fetch personal rankings when session completes
+  useEffect(() => {
+    if (viewState === 'complete') {
+      fetchPersonalRankings();
+    }
+  }, [viewState, fetchPersonalRankings]);
 
   // ===== handleVote — vote must complete before next-pair to avoid race condition =====
   const handleVote = useCallback(async (winnerId: string) => {
@@ -798,19 +847,81 @@ function VotingPageContent() {
   // ========== COMPLETE ==========
   if (viewState === 'complete') {
     return (
-      <div className="min-h-[100dvh] flex flex-col items-center justify-center bg-slate-900 p-6 relative overflow-hidden">
+      <div className="min-h-[100dvh] bg-slate-900 p-6 relative overflow-hidden">
         <ConfettiCelebration themeColor={uiConfig.themeColor} />
-        <div className="text-center max-w-sm relative z-10 animate-fade-in">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
-            <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+        <div className="max-w-2xl mx-auto relative z-10 animate-fade-in">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
+              <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-3">{t.thankYou}</h1>
+            <p className="text-slate-400">{t.allComplete}</p>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-3">{t.thankYou}</h1>
-          <p className="text-slate-400 mb-8">{t.allComplete}</p>
-          <p className="text-sm text-slate-500 mb-8">{t.resultsHidden}</p>
-          {displayLogoUrl && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={displayLogoUrl} alt="Logo" className="h-10 w-auto object-contain mx-auto opacity-50" />
+
+          {/* Personal Rankings */}
+          {rankingsLoading ? (
+            <div className="text-center py-8">
+              <div
+                className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+              />
+              <p className="text-slate-400 text-sm mt-3">{t.loadingRankings}</p>
+            </div>
+          ) : personalRankings.length > 0 && (
+            <div className="mb-8">
+              <h2 className="text-lg font-semibold text-white mb-2 text-center">{t.yourTopPicks}</h2>
+              <p className="text-slate-400 text-sm mb-6 text-center max-w-md mx-auto">{t.yourTopPicksDesc}</p>
+
+              <div className="space-y-6">
+                {personalRankings.map((category) => (
+                  <div key={category.categoryId} className="bg-slate-800/50 rounded-xl p-4">
+                    <h3 className="font-medium text-white text-sm mb-3">{category.categoryName}</h3>
+                    <div className="grid grid-cols-4 gap-2">
+                      {category.topItems.map((item, idx) => (
+                        <div key={item.id} className="relative">
+                          <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
+                            {item.imageUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.imageUrl}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-slate-500">
+                                #{idx + 1}
+                              </div>
+                            )}
+                          </div>
+                          {/* Rank badge */}
+                          <div
+                            className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
+                            style={{ backgroundColor: idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : idx === 2 ? '#CD7F32' : uiConfig.themeColor }}
+                          >
+                            {idx + 1}
+                          </div>
+                        </div>
+                      ))}
+                      {/* Empty slots if less than 4 items */}
+                      {category.topItems.length < 4 && Array.from({ length: 4 - category.topItems.length }).map((_, i) => (
+                        <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
+
+          {/* Footer */}
+          <div className="text-center">
+            <p className="text-sm text-slate-500 mb-6">{t.resultsHidden}</p>
+            {displayLogoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={displayLogoUrl} alt="Logo" className="h-10 w-auto object-contain mx-auto opacity-50" />
+            )}
+          </div>
         </div>
       </div>
     );

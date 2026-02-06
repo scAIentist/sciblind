@@ -39,25 +39,37 @@ export async function GET() {
       },
     });
 
-    // Calculate global stats
+    // Calculate global stats (excluding test sessions)
     const totalStudies = studies.length;
     const activeStudies = studies.filter((s) => s.isActive).length;
-    const totalComparisons = studies.reduce((acc, s) => acc + s._count.comparisons, 0);
-    const totalSessions = studies.reduce((acc, s) => acc + s._count.sessions, 0);
-    const completedSessions = studies.reduce(
-      (acc, s) => acc + s.sessions.filter((sess) => sess.isCompleted).length,
-      0
-    );
 
-    // Calculate flagged comparisons
+    // Filter out test sessions for accurate stats
+    const realSessions = studies.flatMap((s) => s.sessions.filter((sess) => !sess.isTestSession));
+    const totalSessions = realSessions.length;
+    const completedSessions = realSessions.filter((sess) => sess.isCompleted).length;
+
+    // Count real comparisons (not from test sessions)
+    const totalComparisons = await prisma.comparison.count({
+      where: {
+        OR: [
+          { isFlagged: false },
+          { flagReason: { not: 'test_session' } },
+        ],
+      },
+    });
+
+    // Calculate flagged comparisons (excluding test_session flags)
     const flaggedComparisons = await prisma.comparison.count({
-      where: { isFlagged: true },
+      where: {
+        isFlagged: true,
+        flagReason: { not: 'test_session' },
+      },
     });
 
     // Process each study for detailed stats
     const studyStats = await Promise.all(
       studies.map(async (study) => {
-        // Calculate category progress
+        // Calculate category progress (excluding test session comparisons)
         const categoryStats = await Promise.all(
           study.categories.map(async (category) => {
             const itemCount = category.items.length;
@@ -65,6 +77,10 @@ export async function GET() {
               where: {
                 studyId: study.id,
                 categoryId: category.id,
+                OR: [
+                  { flagReason: null },
+                  { flagReason: { not: 'test_session' } },
+                ],
               },
             });
 
@@ -98,19 +114,21 @@ export async function GET() {
           })
         );
 
-        // Access code usage
+        // Access code usage (excluding test codes)
+        const realAccessCodes = study.accessCodes.filter((c) => !c.isTestCode);
         const accessCodeStats = {
-          total: study.accessCodes.length,
-          used: study.accessCodes.filter((c) => c.usedAt).length,
-          available: study.accessCodes.filter((c) => !c.usedAt && c.isActive).length,
+          total: realAccessCodes.length,
+          used: realAccessCodes.filter((c) => c.usedAt).length,
+          available: realAccessCodes.filter((c) => !c.usedAt && c.isActive).length,
         };
 
-        // Session stats
+        // Session stats (excluding test sessions)
+        const realStudySessions = study.sessions.filter((s) => !s.isTestSession);
         const sessionStats = {
-          total: study.sessions.length,
-          completed: study.sessions.filter((s) => s.isCompleted).length,
-          inProgress: study.sessions.filter((s) => !s.isCompleted).length,
-          flagged: study.sessions.filter((s) => s.isFlagged).length,
+          total: realStudySessions.length,
+          completed: realStudySessions.filter((s) => s.isCompleted).length,
+          inProgress: realStudySessions.filter((s) => !s.isCompleted).length,
+          flagged: realStudySessions.filter((s) => s.isFlagged).length,
         };
 
         // Average response time

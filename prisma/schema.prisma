@@ -343,6 +343,7 @@ enum ActivityAction {
   ITEMS_UPLOADED         // Items uploaded to a study
   RANKINGS_VIEWED        // Rankings page accessed
   EXPORT_DOWNLOADED      // Data export downloaded
+  ACCESS_CODES_CREATED   // Access codes created via API
 
   // System
   ELO_RESET              // ELO ratings were reset

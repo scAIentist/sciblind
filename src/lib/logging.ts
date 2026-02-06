@@ -31,7 +31,8 @@ type ActivityAction =
   | 'RANKINGS_VIEWED'
   | 'EXPORT_DOWNLOADED'
   | 'ELO_RESET'
-  | 'SCHEMA_MIGRATED';
+  | 'SCHEMA_MIGRATED'
+  | 'ACCESS_CODES_CREATED';
 
 interface LogOptions {
   studyId?: string;
