@@ -578,7 +578,7 @@ function VotingPageContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewState, pair, isVoting, showVoteAnimation]);
 
-  // ===== handleVote — fire-and-forget vote, fetch next pair in parallel =====
+  // ===== handleVote — vote must complete before next-pair to avoid race condition =====
   const handleVote = useCallback(async (winnerId: string) => {
     if (!pair || isVoting || voteInProgressRef.current || showVoteAnimation) return;
 
@@ -588,8 +588,11 @@ function VotingPageContent() {
     setIsVoting(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    // 1. Fire vote (fire-and-forget — don't block on response)
-    fetch(`/api/participate/${studyId}/vote`, {
+    // 1. Start animation timer (runs in parallel with vote)
+    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
+
+    // 2. Submit vote — MUST complete before fetching next pair to prevent duplicate pairs
+    const votePromise = fetch(`/api/participate/${studyId}/vote`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -602,18 +605,21 @@ function VotingPageContent() {
         categoryId: currentCategoryId,
         responseTimeMs,
       }),
-    }).catch(() => {}); // silently ignore — vote errors are non-fatal for UX
-
-    // 2. Start animation + next-pair fetch simultaneously
-    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
-    const nextPairUrl = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
-    nextPairUrl.searchParams.set('token', token!);
-    if (currentCategoryId) nextPairUrl.searchParams.set('categoryId', currentCategoryId);
-    const nextPairPromise = fetch(nextPairUrl.toString()).then(r => r.json());
+    }).then(r => r.ok).catch(() => false);
 
     try {
-      // 3. Wait for both animation and next-pair data
-      const [, nextData] = await Promise.all([animationDone, nextPairPromise]);
+      // 3. Wait for BOTH vote and animation to complete before fetching next pair
+      // This prevents the race condition where next-pair runs before vote is committed
+      const [, voteOk] = await Promise.all([animationDone, votePromise]);
+
+      // If vote failed, still continue (non-fatal for UX) but log it
+      if (!voteOk) console.warn('Vote submission failed, continuing anyway');
+
+      // 4. NOW fetch next pair (vote is guaranteed committed)
+      const nextPairUrl = new URL(`/api/participate/${studyId}/next-pair`, window.location.origin);
+      nextPairUrl.searchParams.set('token', token!);
+      if (currentCategoryId) nextPairUrl.searchParams.set('categoryId', currentCategoryId);
+      const nextData = await fetch(nextPairUrl.toString()).then(r => r.json());
 
       // Fade out current images
       setImagesReady(false);
