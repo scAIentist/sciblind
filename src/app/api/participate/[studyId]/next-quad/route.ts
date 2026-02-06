@@ -113,7 +113,8 @@ export async function GET(
         const isPairwiseHeavy = rawCount > 0 && (remainder > 0 || rawCount >= targetComparisons);
         const quadCount = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawCount / 2)) : perfectQuads;
         const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
-        const isComplete = (quadCount >= targetComparisons && catCoverage) || rawCount >= targetComparisons;
+        // ALWAYS require coverage for completion, even for legacy pairwise
+        const isComplete = quadCount >= targetComparisons && catCoverage;
 
         return {
           id: cat.id,
@@ -175,8 +176,9 @@ export async function GET(
     const completedQuads = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawComparisons / 2)) : perfectQuads;
     const coverageAchieved = hasFullCoverage(items, sessionComparisons as any);
 
-    // Check completion - also mark complete if raw pairwise count meets target
-    if ((completedQuads >= targetQuads && coverageAchieved) || rawComparisons >= targetQuads) {
+    // Check completion - ALWAYS require coverage, even for legacy pairwise
+    // This ensures every item has been shown at least once before completion
+    if (completedQuads >= targetQuads && coverageAchieved) {
       // Category complete
       if (study.hasCategorySeparation) {
         // Check all categories
@@ -195,8 +197,10 @@ export async function GET(
           const catTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
           const catComps = allSessionComps.filter((c) => c.categoryId === cat.id);
           const rawCount = catComps.length;
-          // Handle legacy pairwise - if raw count meets target, consider complete
-          return Math.floor(rawCount / 3) >= catTarget || rawCount >= catTarget;
+          const quadCount = Math.floor(rawCount / 3);
+          // ALWAYS require coverage for completion
+          const catCoverage = hasFullCoverage(catItems as any, catComps as any);
+          return quadCount >= catTarget && catCoverage;
         });
 
         if (allComplete) {
