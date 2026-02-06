@@ -144,6 +144,7 @@ async function main() {
   // Count items per category for boost calculation
   const itemsPerCategory = new Map<string, number>();
   for (const item of items) {
+    if (!item.categoryId) continue;
     const count = itemsPerCategory.get(item.categoryId) || 0;
     itemsPerCategory.set(item.categoryId, count + 1);
   }
