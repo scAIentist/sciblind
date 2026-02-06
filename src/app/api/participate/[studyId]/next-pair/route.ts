@@ -207,10 +207,28 @@ export async function GET(
       );
     }
 
-    // Get comparisons for this session (in this category if applicable)
-    const sessionComparisons = targetCategoryId
-      ? session.comparisons.filter((c) => c.categoryId === targetCategoryId)
-      : session.comparisons;
+    // CRITICAL: Re-fetch comparisons fresh from DB to avoid race conditions
+    // The session.comparisons from the initial query may be stale if a vote
+    // was processed concurrently. This ensures we always get the latest data.
+    const freshComparisons = await prisma.comparison.findMany({
+      where: {
+        sessionId: session.id,
+        ...(targetCategoryId ? { categoryId: targetCategoryId } : {}),
+      },
+      select: {
+        id: true,
+        itemAId: true,
+        itemBId: true,
+        winnerId: true,
+        categoryId: true,
+        isFlagged: true,
+        flagReason: true,
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    // Use fresh comparisons for matchmaking
+    const sessionComparisons = freshComparisons;
 
     // Calculate target comparisons
     const targetComparisons = calculateRecommendedComparisons(items.length, 5);
@@ -261,17 +279,23 @@ export async function GET(
         },
       );
 
-      // Check if all categories are complete — single query for all items
+      // Check if all categories are complete — fresh fetch to avoid stale data
       if (study.hasCategorySeparation) {
-        const allStudyItems = await prisma.item.findMany({
-          where: { studyId },
-          select: { id: true, categoryId: true },
-        });
+        const [allStudyItems, allSessionComparisons] = await Promise.all([
+          prisma.item.findMany({
+            where: { studyId },
+            select: { id: true, categoryId: true },
+          }),
+          prisma.comparison.findMany({
+            where: { sessionId: session.id },
+            select: { id: true, itemAId: true, itemBId: true, categoryId: true },
+          }),
+        ]);
 
         const allComplete = study.categories.map((cat) => {
           const catItems = allStudyItems.filter((i) => i.categoryId === cat.id);
           const catTarget = calculateRecommendedComparisons(catItems.length, 5);
-          const catComparisons = session.comparisons.filter((c) => c.categoryId === cat.id);
+          const catComparisons = allSessionComparisons.filter((c) => c.categoryId === cat.id);
           const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
           return catComparisons.length >= catTarget && catCoverage;
         });
