@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-06 (v5 — Quadruplet Voting Mode)
+> Last Updated: 2026-02-06 (v5.1 — Coverage Bug Fix + Production Ready)
 
 ## Project Overview
 
@@ -194,16 +194,18 @@ The voting page is optimized for perceived instant response:
 | 4. razredi | 29 | 20 (IDs: 50-78) |
 | 5. razredi | 50 | 19 (IDs: 79-128) |
 
-**Reviewer Access Codes** (single-use):
-1. IzVRS-ocenjevalec90074 (USED - completed 3. razredi)
-2. IzVRS-ocenjevalec25793
-3. IzVRS-ocenjevalec85642
-4. IzVRS-ocenjevalec95696
-5. IzVRS-ocenjevalec86339
-6. IzVRS-ocenjevalec36430
-7. IzVRS-ocenjevalec98370
-8. IzVRS-ocenjevalec14944
-9. IzVRS-ocenjevalec29621
+**Reviewer Access Codes** (single-use, all available):
+1. IzVRS-ocenjevalec90074 → Label: "Ocenjevalec 90074"
+2. IzVRS-ocenjevalec25793 → Label: "Ocenjevalec 25793"
+3. IzVRS-ocenjevalec85642 → Label: "Ocenjevalec 85642"
+4. IzVRS-ocenjevalec95696 → Label: "Ocenjevalec 95696"
+5. IzVRS-ocenjevalec86339 → Label: "Ocenjevalec 86339"
+6. IzVRS-ocenjevalec36430 → Label: "Ocenjevalec 36430"
+7. IzVRS-ocenjevalec98370 → Label: "Ocenjevalec 98370"
+8. IzVRS-ocenjevalec14944 → Label: "Ocenjevalec 14944"
+9. IzVRS-ocenjevalec29621 → Label: "Ocenjevalec 29621"
+
+**Note**: Code labels now match the code numbers for traceability (fixed 2026-02-06).
 
 **Test Code**: `IzVRS-TEST-MODE`
 - Unlimited uses (no single-use restriction)
@@ -354,6 +356,9 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `scripts/update-izvrs-settings.ts` | Update IzVRS study: allowContinuedVoting=false, uiShowCounts=true |
 | `scripts/add-comparison-mode-column.ts` | Add comparisonMode column to Study table |
 | `scripts/verify-data.ts` | Verify study data integrity (items, comparisons, sessions) |
+| `scripts/update-artist-rankings.ts` | Update artist rankings and ELO boosts from Excel file |
+| `scripts/cleanup-ocenjevalec1.ts` | Cleanup corrupted session, reset code for re-use |
+| `scripts/fix-code-labels.ts` | Fix access code labels to match code numbers |
 
 ### Tests
 
@@ -625,7 +630,9 @@ function calculateRecommendedQuadComparisons(itemCount, reviewerCount = 5) {
 
 **Algorithm version**: `sciblind-v2-quad` stored in comparison records
 
-**Legacy pairwise handling**: If a session has existing pairwise comparisons before switching to quad mode, they count toward category completion. The API checks if raw comparison count meets target OR if quad count (comparisons/3) meets target.
+**Legacy pairwise handling**: If a session has existing pairwise comparisons before switching to quad mode, they count toward category completion. The quad count is calculated as `floor(comparisons/3)`.
+
+**Coverage enforcement** (CRITICAL): Category completion ALWAYS requires full coverage, regardless of comparison count. This was a bug fix in v5.1 — previously, categories could complete without showing all items if raw comparison count met the target.
 
 ### No duplicate pairs
 - Set-based tracking with sorted keys
@@ -731,7 +738,9 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `8a725c9` | Full-screen checkpoint interstitials, progress bar with counter |
 | `64a8ecc` | Add allowContinuedVoting to study config API |
 | `2fc1e44` | Add allowContinuedVoting toggle to admin Study Settings panel |
-| `TBD` | Quadruplet voting mode — 4 items, pick best 1, generates 3 pairwise wins |
+| `8b359c9` | Quadruplet voting mode — 4 items, pick best 1, generates 3 pairwise wins |
+| `4d83c60` | Fix coverage enforcement — categories require full coverage before completion |
+| `3be0a48` | Fix TypeScript error in update-artist-rankings script |
 
 ## Known Issues & Fixes
 
@@ -764,6 +773,23 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 - Database `imageKey` fields updated (e.g., "izvrs/3-razredi/1.webp")
 - Seed script updated for new studies
 - Migration script: `npx tsx scripts/migrate-to-webp.ts`
+
+### Quad Mode Coverage Bug Fix (2026-02-06)
+**BUG**: In quad mode, categories could complete without showing all items. The code had a fallback condition `|| rawComparisons >= targetQuads` that bypassed the coverage check when raw pairwise comparison count met the target.
+
+**FIX** (commit `4d83c60`):
+- Removed the fallback condition that bypassed coverage check
+- Category completion now ALWAYS requires `hasFullCoverage()` to return true
+- Applied to all three places in `next-quad/route.ts`: category selection, voting completion, and "all categories complete" check
+
+**Session cleanup**: The corrupted session from Ocenjevalec 90074 was cleaned up:
+- Deleted 83 comparisons with incorrect coverage
+- Reset ELO ratings to base values (1500 + artistEloBoost)
+- Reset the access code so it can be used again
+- Script: `scripts/cleanup-ocenjevalec1.ts`
+
+**Code labels fix**: Access code labels were incorrectly set as "Ocenjevalec 1", "Ocenjevalec 2", etc. instead of matching the actual code numbers. Fixed to "Ocenjevalec 90074", "Ocenjevalec 25793", etc. for proper traceability.
+- Script: `scripts/fix-code-labels.ts`
 
 ### Checkpoint Interstitials & Progress Bar Overhaul (2026-02-05)
 **Problem**: Motivational checkpoint toasts were tiny and barely visible. Progress bar didn't show counts. `allowContinuedVoting` couldn't be changed without direct DB access.
@@ -798,10 +824,14 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 
 ## Next Steps
 
-1. All completed items from v1-v3 (see "What's Implemented" table above)
-2. 🔄 Keycloak integration for admin auth (replaces ADMIN_SECRET)
-3. 🔄 Traefik reverse proxy setup
-4. Planned: PDF export with methodology
+1. ✅ All completed items from v1-v5 (see "What's Implemented" table above)
+2. 🔄 Update artist score boosts when full rankings Excel is provided
+   - Script ready: `npx tsx scripts/update-artist-rankings.ts "path/to/file.xlsx" --yes`
+   - Formula: `newElo = (currentElo - oldBoost) + newBoost`
+   - Boost calculation: rank 1 = +200, last rank = +20 (linear scale)
+3. 🔄 Keycloak integration for admin auth (replaces ADMIN_SECRET)
+4. 🔄 Traefik reverse proxy setup
+5. Planned: PDF export with methodology
 
 ## Keycloak Integration (Planned)
 
