@@ -649,6 +649,9 @@ export function calculateTournamentQuads(winnerCount: number): number {
  * Select next quadruplet from WINNERS ONLY (items that won at least once).
  * Used in tournament phase after coverage is complete.
  *
+ * OPTIMIZED: Uses simplified scoring since all candidates are already winners.
+ * Focuses on win count sorting rather than complex coverage logic.
+ *
  * Returns null if fewer than 4 winners exist (need more coverage voting).
  *
  * @param items - All items in the category
@@ -667,6 +670,48 @@ export function selectNextQuadWinnersOnly(
     return null;
   }
 
-  // Use existing selectNextQuad logic but with winners-only pool
-  return selectNextQuad(winnerItems, sessionComparisons);
+  // FAST PATH: Count wins per item for quick sorting
+  const winCounts = new Map<string, number>();
+  for (const comp of sessionComparisons) {
+    if (comp.winnerId) {
+      winCounts.set(comp.winnerId, (winCounts.get(comp.winnerId) || 0) + 1);
+    }
+  }
+
+  // Track items shown in the last comparison for variety
+  const recentlyShown = new Set<string>();
+  if (sessionComparisons.length > 0) {
+    const lastComp = sessionComparisons[sessionComparisons.length - 1];
+    recentlyShown.add(lastComp.itemAId);
+    recentlyShown.add(lastComp.itemBId);
+  }
+
+  // Simple score: prioritize top winners, but add variety
+  const sortedWinners = [...winnerItems].sort((a, b) => {
+    const aWins = winCounts.get(a.id) || 0;
+    const bWins = winCounts.get(b.id) || 0;
+    // Top winners first, but penalize recently shown
+    const aScore = aWins * 10 - (recentlyShown.has(a.id) ? 5 : 0);
+    const bScore = bWins * 10 - (recentlyShown.has(b.id) ? 5 : 0);
+    return bScore - aScore; // Higher score = more wins = better
+  });
+
+  // Select top 4 winners (with slight ELO diversity)
+  const selected: Item[] = [];
+  for (const item of sortedWinners) {
+    if (selected.length >= 4) break;
+    selected.push(item);
+  }
+
+  if (selected.length < 4) {
+    return null;
+  }
+
+  // Randomize display positions
+  const positions = shuffleArray(selected.map((item) => item.id));
+
+  return {
+    items: selected,
+    positions,
+  };
 }

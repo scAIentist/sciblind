@@ -762,7 +762,7 @@ function VotingPageContent() {
     }
   }
 
-  // ===== handleQuadVote — must await vote to prevent race condition =====
+  // ===== handleQuadVote — optimized for speed =====
   const handleQuadVote = useCallback(async (winnerId: string) => {
     if (!quad || isVoting || voteInProgressRef.current || showVoteAnimation) return;
 
@@ -772,10 +772,10 @@ function VotingPageContent() {
     setIsVoting(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    // Start animation timer (runs in parallel with vote)
+    // 1. Start animation timer
     const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
 
-    // Submit vote — MUST complete before fetching next quad to prevent race condition
+    // 2. Submit vote (fire-and-forget style, but we track promise for error handling)
     const votePromise = fetch(`/api/participate/${studyId}/vote-quad`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -789,20 +789,20 @@ function VotingPageContent() {
       }),
     }).then(r => r.ok).catch(() => false);
 
+    // 3. Start fetching next quad IMMEDIATELY (parallel with vote and animation)
+    const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
+    nextUrl.searchParams.set('token', token!);
+    if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
+    const nextQuadPromise = fetch(nextUrl.toString()).then(r => r.json());
+
     try {
-      // Wait for BOTH vote and animation to complete before fetching next quad
-      const [, voteOk] = await Promise.all([animationDone, votePromise]);
+      // Wait for animation, vote, and next quad fetch in parallel
+      const [, voteOk, nextData] = await Promise.all([animationDone, votePromise, nextQuadPromise]);
       if (!voteOk) console.warn('Quad vote submission failed, continuing anyway');
 
-      // NOW fetch next quad (vote is guaranteed committed)
-      const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
-      nextUrl.searchParams.set('token', token!);
-      if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
-      const nextData = await fetch(nextUrl.toString()).then(r => r.json());
-
-      // Fade out current images
+      // Fade out current images briefly
       setImagesReady(false);
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 80));
 
       setSelectedWinnerId(null);
       setShowVoteAnimation(false);
@@ -823,23 +823,28 @@ function VotingPageContent() {
       }
 
       if (nextData.complete || nextData.allCategoriesComplete) {
+        // Fetch rankings before showing complete screen
+        fetchPersonalRankings();
+        fetchGlobalRankings();
         setViewState('complete');
         return;
       }
 
       if (nextData.categoryComplete) {
-        const catRes = await fetch(`/api/participate/${studyId}/next-quad?token=${token}`);
-        const catData = await catRes.json();
-        if (catData.complete || catData.allCategoriesComplete) {
-          setViewState('complete');
-        } else if (catData.requiresCategorySelection) {
-          setCategories(catData.categories);
-          setViewState('categories');
-        }
+        // Show category done screen with rankings
+        setCategoryDoneInfo({
+          categoryId: currentCategoryId || '',
+          thresholdMet: true,
+          allowContinuedVoting: false,
+        });
+        // Fetch rankings for this category
+        fetchPersonalRankings();
+        fetchGlobalRankings();
+        setViewState('categoryDone');
         return;
       }
 
-      // Preload next quad images (should be fast since they're already requested)
+      // Preload next quad images (usually already cached from parallel fetch)
       await Promise.all(nextData.items.map((item: ItemData) => preloadImage(buildImageUrl(item))));
       setQuad(nextData);
       setImagesReady(true);
@@ -858,7 +863,7 @@ function VotingPageContent() {
       setIsVoting(false);
       voteInProgressRef.current = false;
     }
-  }, [quad, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router]);
+  }, [quad, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router, fetchPersonalRankings, fetchGlobalRankings]);
 
   // ===== Init: fetch study + thumbnails + first pair/quad =====
   useEffect(() => {
@@ -1315,26 +1320,91 @@ function VotingPageContent() {
             </div>
           )}
         </div>
+
+        {/* Rankings Modal (for completed categories) */}
+        {showRankingsModal && rankingsModalCategoryId && (
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 rounded-2xl max-w-lg w-full p-6 relative animate-fade-in">
+              <button
+                onClick={() => setShowRankingsModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h2 className="text-xl font-bold text-white mb-4 text-center">
+                {categories.find(c => c.id === rankingsModalCategoryId)?.name}
+              </h2>
+              {rankingsLoading ? (
+                <div className="py-8 text-center">
+                  <div
+                    className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                    style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+                  />
+                </div>
+              ) : (
+                <RankingsComparison
+                  categoryName=""
+                  personalItems={personalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                  globalItems={globalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                  themeColor={uiConfig.themeColor}
+                  t={t}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   // ========== CATEGORY DONE ==========
   if (viewState === 'categoryDone' && categoryDoneInfo) {
+    // Find rankings for this category
+    const personalCatRanking = personalRankings.find(r => r.categoryId === categoryDoneInfo.categoryId);
+    const globalCatRanking = globalRankings.find(r => r.categoryId === categoryDoneInfo.categoryId);
+    const categoryName = categories.find(c => c.id === categoryDoneInfo.categoryId)?.name || '';
+
     return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-slate-900 p-6">
-        <div className="text-center max-w-sm animate-fade-in">
-          <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
-            <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+      <div className="min-h-[100dvh] bg-slate-900 p-6 overflow-auto">
+        <div className="max-w-lg mx-auto animate-fade-in">
+          {/* Header */}
+          <div className="text-center mb-6">
+            <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
+              <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+            </div>
+            <h2 className="text-2xl font-bold text-white mb-2">{t.categoryComplete}</h2>
+            {categoryName && <p className="text-lg text-slate-300 font-medium">{categoryName}</p>}
+            <p className="text-sm text-slate-400 mt-2 leading-relaxed">
+              {categoryDoneInfo.thresholdMet ? t.thresholdSufficient : t.thresholdInsufficient}
+            </p>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-3">{t.categoryComplete}</h2>
-          <p className="text-sm text-slate-400 mb-8 leading-relaxed">
-            {categoryDoneInfo.thresholdMet ? t.thresholdSufficient : t.thresholdInsufficient}
-          </p>
+
+          {/* Rankings comparison */}
+          {rankingsLoading ? (
+            <div className="py-8 text-center">
+              <div
+                className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+              />
+              <p className="text-slate-400 text-sm mt-3">{t.loadingRankings}</p>
+            </div>
+          ) : personalCatRanking && globalCatRanking ? (
+            <div className="mb-6">
+              <RankingsComparison
+                categoryName=""
+                personalItems={personalCatRanking.topItems}
+                globalItems={globalCatRanking.topItems}
+                themeColor={uiConfig.themeColor}
+                t={t}
+              />
+            </div>
+          ) : null}
+
+          {/* Actions */}
           <div className="space-y-3">
             {categoryDoneInfo.allowContinuedVoting && (
               <button
-                onClick={() => { setCategoryDoneInfo(null); setIsLoading(true); fetchNextPair(categoryDoneInfo.categoryId); }}
+                onClick={() => { setCategoryDoneInfo(null); setIsLoading(true); isQuadMode ? fetchNextQuad(categoryDoneInfo.categoryId) : fetchNextPair(categoryDoneInfo.categoryId); }}
                 className="w-full px-6 py-3 text-white rounded-full font-semibold active:scale-95 transition-transform"
                 style={{ backgroundColor: uiConfig.themeColor }}
               >
@@ -1346,9 +1416,12 @@ function VotingPageContent() {
                 setCategoryDoneInfo(null);
                 setLastCheckpoint(0);
                 setIsLoading(true);
-                const catRes = await fetch(`/api/participate/${studyId}/next-pair?token=${token}`);
+                const endpoint = isQuadMode ? 'next-quad' : 'next-pair';
+                const catRes = await fetch(`/api/participate/${studyId}/${endpoint}?token=${token}`);
                 const catData = await catRes.json();
                 if (catData.complete || catData.allCategoriesComplete) {
+                  fetchPersonalRankings();
+                  fetchGlobalRankings();
                   setViewState('complete');
                   setIsLoading(false);
                 } else if (catData.requiresCategorySelection) {
@@ -1357,10 +1430,8 @@ function VotingPageContent() {
                   setIsLoading(false);
                 }
               }}
-              className={`w-full px-6 py-3 rounded-full font-semibold active:scale-95 transition-transform ${
-                categoryDoneInfo.allowContinuedVoting ? 'bg-slate-700 text-slate-300' : 'text-white shadow-lg'
-              }`}
-              style={!categoryDoneInfo.allowContinuedVoting ? { backgroundColor: uiConfig.themeColor } : undefined}
+              className="w-full px-6 py-3 text-white rounded-full font-semibold active:scale-95 transition-transform shadow-lg"
+              style={{ backgroundColor: uiConfig.themeColor }}
             >
               {t.nextCategory}
             </button>

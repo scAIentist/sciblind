@@ -105,26 +105,21 @@ export async function GET(
 
       const categoryProgress = study.categories.map((cat) => {
         const catItems = allItems.filter((i) => i.categoryId === cat.id);
-        const baseTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
+        const catBaseTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
         const catComparisons = sessionComparisons.filter((c) => c.categoryId === cat.id);
         // For quads, count unique quad-votes (each quad creates multiple comparison records)
-        // We'll track by dividing comparison count by 3 (each quad = 3 comparisons)
-        // BUT: handle legacy pairwise comparisons - if count doesn't divide evenly by 3,
-        // we have pairwise comparisons mixed in. Count those as equivalent coverage.
         const rawCount = catComparisons.length;
         const perfectQuads = Math.floor(rawCount / 3);
         const remainder = rawCount % 3;
-        // Legacy pairwise comparisons count as 1 each toward target (they're actual votes)
-        // If remainder != 0, we have legacy pairwise comparisons
-        // Best estimate: if count > target*3, likely pairwise-heavy - count raw comparisons
-        const isPairwiseHeavy = rawCount > 0 && (remainder > 0 || rawCount >= baseTarget);
+        // Legacy pairwise comparisons handling
+        const isPairwiseHeavy = rawCount > 0 && (remainder > 0 || rawCount >= catBaseTarget);
         const quadCount = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawCount / 2)) : perfectQuads;
         const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
 
-        // Tournament phase: Add extra quads for winner refinement
-        const winnerIds = getSessionWinnerIds(catComparisons as any);
-        const tournamentQuads = calculateTournamentQuads(winnerIds.size);
-        const extendedTarget = baseTarget + tournamentQuads;
+        // Tournament phase: FIXED 4 extra quads once coverage is achieved
+        const coveragePhaseComplete = quadCount >= catBaseTarget && catCoverage;
+        const tournamentQuads = coveragePhaseComplete ? 4 : 0;
+        const extendedTarget = catBaseTarget + tournamentQuads;
 
         // ALWAYS require coverage AND extended target for completion
         const isComplete = quadCount >= extendedTarget && catCoverage;
@@ -190,13 +185,13 @@ export async function GET(
     const coverageAchieved = hasFullCoverage(items, sessionComparisons as any);
 
     // Tournament phase: Calculate extended target for winner refinement
-    // This adds 3-5 extra quads after coverage is complete, featuring only winners
-    const winnerIds = getSessionWinnerIds(sessionComparisons as any);
-    const tournamentQuads = calculateTournamentQuads(winnerIds.size);
+    // FIXED: Use a stable tournament quota (always 4 extra quads) to avoid progress bar jumping
+    // This prevents the target from changing as more winners accumulate during tournament
+    const coveragePhaseComplete = completedQuads >= baseTarget && coverageAchieved;
+    const tournamentQuads = coveragePhaseComplete ? 4 : 0; // Fixed 4 quads for tournament
     const extendedTarget = baseTarget + tournamentQuads;
 
     // Determine phase
-    const coveragePhaseComplete = completedQuads >= baseTarget && coverageAchieved;
     const inTournamentPhase = coveragePhaseComplete && completedQuads < extendedTarget;
 
     // Check completion - require EXTENDED target AND coverage
@@ -221,12 +216,11 @@ export async function GET(
           const catComps = allSessionComps.filter((c) => c.categoryId === cat.id);
           const rawCount = catComps.length;
           const quadCount = Math.floor(rawCount / 3);
-          // Calculate extended target for this category
-          const catWinnerIds = getSessionWinnerIds(catComps as any);
-          const catTournamentQuads = calculateTournamentQuads(catWinnerIds.size);
-          const catExtendedTarget = catBaseTarget + catTournamentQuads;
-          // ALWAYS require coverage AND extended target for completion
           const catCoverage = hasFullCoverage(catItems as any, catComps as any);
+          // Tournament phase: FIXED 4 extra quads once coverage achieved
+          const coveragePhaseComplete = quadCount >= catBaseTarget && catCoverage;
+          const catTournamentQuads = coveragePhaseComplete ? 4 : 0;
+          const catExtendedTarget = catBaseTarget + catTournamentQuads;
           return quadCount >= catExtendedTarget && catCoverage;
         });
 
