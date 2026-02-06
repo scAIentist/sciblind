@@ -17,8 +17,10 @@ import {
   getSessionWinnerIds,
   hasFullCoverage,
 } from '@/lib/matchmaking';
+import { isPublishableThreshold } from '@/lib/ranking/statistics';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
+import { logActivity } from '@/lib/logging';
 
 export async function GET(
   request: NextRequest,
@@ -63,13 +65,25 @@ export async function GET(
       );
     }
 
-    // Get session
+    // Get session - OPTIMIZED: Select only needed fields
     const session = await prisma.session.findUnique({
       where: { token: sessionToken },
-      include: {
+      select: {
+        id: true,
+        studyId: true,
+        isCompleted: true,
+        comparisonCount: true,
         study: {
-          include: {
-            categories: { orderBy: { displayOrder: 'asc' } },
+          select: {
+            id: true,
+            hasCategorySeparation: true,
+            allowContinuedVoting: true,
+            minExposuresPerItem: true,
+            minTotalComparisons: true,
+            categories: {
+              orderBy: { displayOrder: 'asc' },
+              select: { id: true, name: true, slug: true, displayOrder: true },
+            },
           },
         },
       },
@@ -123,8 +137,10 @@ export async function GET(
         const TOURNAMENT_QUADS = 4;
         const fullTarget = catBaseTarget + TOURNAMENT_QUADS;
 
-        // ALWAYS require coverage AND full target for completion
-        const isComplete = quadCount >= fullTarget && catCoverage;
+        // Completion: if allowContinuedVoting=false, stop at target; otherwise need coverage too
+        const isComplete = study.allowContinuedVoting
+          ? (quadCount >= fullTarget && catCoverage)
+          : (quadCount >= fullTarget);
 
         return {
           id: cat.id,
@@ -145,13 +161,29 @@ export async function GET(
       );
     }
 
-    // Get items for this category
-    const items = await prisma.item.findMany({
-      where: {
-        studyId,
-        ...(categoryId ? { categoryId } : {}),
-      },
-    });
+    // OPTIMIZED: Parallel fetch of items and session comparisons
+    const [items, sessionComparisons] = await Promise.all([
+      prisma.item.findMany({
+        where: {
+          studyId,
+          ...(categoryId ? { categoryId } : {}),
+        },
+      }),
+      prisma.comparison.findMany({
+        where: {
+          sessionId: session.id,
+          ...(categoryId ? { categoryId } : {}),
+        },
+        select: {
+          id: true,
+          itemAId: true,
+          itemBId: true,
+          winnerId: true,
+          categoryId: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
 
     if (items.length < 4) {
       return NextResponse.json(
@@ -159,22 +191,6 @@ export async function GET(
         { status: 400, headers: rateLimitHeaders }
       );
     }
-
-    // Get fresh session comparisons
-    const sessionComparisons = await prisma.comparison.findMany({
-      where: {
-        sessionId: session.id,
-        ...(categoryId ? { categoryId } : {}),
-      },
-      select: {
-        id: true,
-        itemAId: true,
-        itemBId: true,
-        winnerId: true,
-        categoryId: true,
-      },
-      orderBy: { createdAt: 'asc' },
-    });
 
     // Calculate progress (quads = comparisons / 3, with legacy pairwise handling)
     const baseTarget = calculateRecommendedQuadComparisons(items.length, 5);
@@ -195,21 +211,58 @@ export async function GET(
     const coveragePhaseComplete = completedQuads >= baseTarget && coverageAchieved;
     const inTournamentPhase = coveragePhaseComplete && completedQuads < fullTarget;
 
-    // Check completion - require FULL target AND coverage
-    // This ensures tournament phase completes before category is done
-    if (completedQuads >= fullTarget && coverageAchieved) {
-      // Category complete
-      if (study.hasCategorySeparation) {
-        // Check all categories
-        const allSessionComps = await prisma.comparison.findMany({
-          where: { sessionId: session.id },
-          select: { categoryId: true },
-        });
+    // Check completion - by default require FULL target AND coverage
+    // However, if allowContinuedVoting=false, stop at target regardless of coverage
+    const categoryDone = study.allowContinuedVoting
+      ? (completedQuads >= fullTarget && coverageAchieved)  // Need both
+      : (completedQuads >= fullTarget);  // Just target is enough
 
-        const allItems = await prisma.item.findMany({
-          where: { studyId },
-          select: { id: true, categoryId: true },
-        });
+    if (categoryDone) {
+      // Category complete - check threshold for messaging
+      const [allStudyComparisons, allStudyItems] = await Promise.all([
+        prisma.comparison.findMany({
+          where: {
+            studyId,
+            ...(categoryId ? { categoryId } : {}),
+          },
+          select: {
+            winnerId: true,
+            itemAId: true,
+            itemBId: true,
+            isFlagged: true,
+            flagReason: true,
+          },
+        }),
+        prisma.item.findMany({
+          where: {
+            studyId,
+            ...(categoryId ? { categoryId } : {}),
+          },
+          select: { id: true, comparisonCount: true, categoryId: true },
+        }),
+      ]);
+
+      const thresholdResult = isPublishableThreshold(
+        allStudyItems.map((i) => ({ id: i.id, comparisonCount: i.comparisonCount })),
+        allStudyComparisons,
+        {
+          minExposuresPerItem: study.minExposuresPerItem,
+          minTotalComparisons: study.minTotalComparisons,
+        },
+      );
+
+      if (study.hasCategorySeparation) {
+        // Check all categories complete
+        const [allSessionComps, allItems] = await Promise.all([
+          prisma.comparison.findMany({
+            where: { sessionId: session.id },
+            select: { categoryId: true },
+          }),
+          prisma.item.findMany({
+            where: { studyId },
+            select: { id: true, categoryId: true },
+          }),
+        ]);
 
         const allComplete = study.categories.every((cat) => {
           const catItems = allItems.filter((i) => i.categoryId === cat.id);
@@ -218,9 +271,10 @@ export async function GET(
           const rawCount = catComps.length;
           const quadCount = Math.floor(rawCount / 3);
           const catCoverage = hasFullCoverage(catItems as any, catComps as any);
-          // Tournament phase: ALWAYS use full target (baseTarget + 4)
           const catFullTarget = catBaseTarget + TOURNAMENT_QUADS;
-          return quadCount >= catFullTarget && catCoverage;
+          return study.allowContinuedVoting
+            ? (quadCount >= catFullTarget && catCoverage)
+            : (quadCount >= catFullTarget);
         });
 
         if (allComplete) {
@@ -228,12 +282,32 @@ export async function GET(
             where: { id: session.id },
             data: { isCompleted: true },
           });
+
+          logActivity('SESSION_COMPLETED', {
+            studyId,
+            sessionId: session.id,
+            detail: `Session completed all categories (${session.comparisonCount} total comparisons)`,
+            metadata: { thresholdMet: thresholdResult.isPublishable, dataStatus: thresholdResult.dataStatus },
+          });
+
           return NextResponse.json(
-            { complete: true, allCategoriesComplete: true },
+            {
+              complete: true,
+              allCategoriesComplete: true,
+              thresholdMet: thresholdResult.isPublishable,
+              dataStatus: thresholdResult.dataStatus,
+            },
             { headers: rateLimitHeaders }
           );
         }
       }
+
+      logActivity('CATEGORY_COMPLETED', {
+        studyId,
+        sessionId: session.id,
+        detail: `Category completed (${completedQuads}/${fullTarget} quads)`,
+        metadata: { categoryId, quads: completedQuads, target: fullTarget, thresholdMet: thresholdResult.isPublishable },
+      });
 
       return NextResponse.json(
         {
@@ -241,6 +315,9 @@ export async function GET(
           categoryId,
           comparisonsInCategory: completedQuads,
           targetComparisons: fullTarget,
+          thresholdMet: thresholdResult.isPublishable,
+          dataStatus: thresholdResult.dataStatus,
+          allowContinuedVoting: study.allowContinuedVoting && !thresholdResult.isPublishable,
         },
         { headers: rateLimitHeaders }
       );
