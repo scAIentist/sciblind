@@ -38,6 +38,17 @@ interface PairData {
   };
 }
 
+interface QuadData {
+  items: ItemData[];
+  positions: string[];
+  categoryId?: string;
+  progress: {
+    completed: number;
+    target: number;
+    percentage: number;
+  };
+}
+
 interface UIConfig {
   themeColor: string;
   logoPosition: 'top-center' | 'top-left' | 'hidden';
@@ -110,6 +121,9 @@ const translations = {
     yourTopPicks: 'Vaši najboljši izbori',
     yourTopPicksDesc: 'Na podlagi vaših primerjav so to dela, ki ste jih najpogosteje izbrali:',
     loadingRankings: 'Nalaganje vaših rezultatov...',
+    // Quadruplet mode
+    selectBest: 'Izberite najboljšo sliko od štirih.',
+    tapBestImage: 'Pritisnite na sliko, ki se vam zdi najboljša',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -152,6 +166,9 @@ const translations = {
     yourTopPicks: 'Your Top Picks',
     yourTopPicksDesc: 'Based on your comparisons, these are the items you selected most often:',
     loadingRankings: 'Loading your results...',
+    // Quadruplet mode
+    selectBest: 'Select the best image from the four.',
+    tapBestImage: 'Tap the image you think is best',
   },
 };
 
@@ -437,8 +454,13 @@ function VotingPageContent() {
   // Personal rankings for complete screen
   const [personalRankings, setPersonalRankings] = useState<CategoryRanking[]>([]);
   const [rankingsLoading, setRankingsLoading] = useState(false);
+  // Quadruplet mode state
+  const [quad, setQuad] = useState<QuadData | null>(null);
 
   useEffect(() => { setIsHydrated(true); }, []);
+
+  // Check if we're in quad mode
+  const isQuadMode = study?.comparisonMode === 'quad';
 
   // Refs
   const startTimeRef = useRef<number>(Date.now());
@@ -577,7 +599,165 @@ function VotingPageContent() {
     }
   }
 
-  // ===== Init: fetch study + thumbnails + first pair =====
+  // ===== fetchNextQuad — for quadruplet mode =====
+  async function fetchNextQuad(categoryId?: string, signal?: AbortSignal) {
+    try {
+      const url = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
+      url.searchParams.set('token', token!);
+      if (categoryId) url.searchParams.set('categoryId', categoryId);
+
+      const res = await fetch(url.toString(), { signal });
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.errorKey === 'INVALID_SESSION') {
+          localStorage.removeItem(`sciblind-session-${studyId}`);
+          router.replace(`/study/${studyId}`);
+          return;
+        }
+        throw new Error(data.error);
+      }
+
+      if (data.requiresCategorySelection) {
+        setCategories(data.categories);
+        setViewState('categories');
+        setIsLoading(false);
+        return;
+      }
+
+      if (data.complete || data.allCategoriesComplete) {
+        setViewState('complete');
+        setIsLoading(false);
+        return;
+      }
+
+      if (data.categoryComplete) {
+        // Category done — go to next or complete
+        const catRes = await fetch(`/api/participate/${studyId}/next-quad?token=${token}`, { signal });
+        const catData = await catRes.json();
+        if (catData.requiresCategorySelection) {
+          setCategories(catData.categories);
+          setViewState('categories');
+        } else if (catData.complete || catData.allCategoriesComplete) {
+          setViewState('complete');
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // Preload images
+      await Promise.all(data.items.map((item: ItemData) => preloadImage(buildImageUrl(item))));
+      setQuad(data);
+      setImagesReady(true);
+      setCurrentCategoryId(data.categoryId);
+      startTimeRef.current = Date.now();
+      setViewState('voting');
+      setIsLoading(false);
+
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        setError(err.message || t.error);
+        setIsLoading(false);
+      }
+    }
+  }
+
+  // ===== handleQuadVote — submit quadruplet vote =====
+  const handleQuadVote = useCallback(async (winnerId: string) => {
+    if (!quad || isVoting || voteInProgressRef.current || showVoteAnimation) return;
+
+    voteInProgressRef.current = true;
+    setSelectedWinnerId(winnerId);
+    setShowVoteAnimation(true);
+    setIsVoting(true);
+    const responseTimeMs = Date.now() - startTimeRef.current;
+
+    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
+
+    const votePromise = fetch(`/api/participate/${studyId}/vote-quad`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sessionToken: token,
+        itemIds: quad.items.map(i => i.id),
+        winnerId,
+        positions: quad.positions,
+        categoryId: currentCategoryId,
+        responseTimeMs,
+      }),
+    }).then(r => r.ok).catch(() => false);
+
+    try {
+      const [, voteOk] = await Promise.all([animationDone, votePromise]);
+      if (!voteOk) console.warn('Quad vote submission failed');
+
+      // Fade out
+      setImagesReady(false);
+      await new Promise(resolve => setTimeout(resolve, 120));
+
+      setSelectedWinnerId(null);
+      setShowVoteAnimation(false);
+
+      // Fetch next quad
+      const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
+      nextUrl.searchParams.set('token', token!);
+      if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
+      const nextData = await fetch(nextUrl.toString()).then(r => r.json());
+
+      if (nextData.error) {
+        if (nextData.errorKey === 'INVALID_SESSION') {
+          localStorage.removeItem(`sciblind-session-${studyId}`);
+          router.replace(`/study/${studyId}`);
+          return;
+        }
+        throw new Error(nextData.error);
+      }
+
+      if (nextData.requiresCategorySelection) {
+        setCategories(nextData.categories);
+        setViewState('categories');
+        return;
+      }
+
+      if (nextData.complete || nextData.allCategoriesComplete) {
+        setViewState('complete');
+        return;
+      }
+
+      if (nextData.categoryComplete) {
+        const catRes = await fetch(`/api/participate/${studyId}/next-quad?token=${token}`);
+        const catData = await catRes.json();
+        if (catData.complete || catData.allCategoriesComplete) {
+          setViewState('complete');
+        } else if (catData.requiresCategorySelection) {
+          setCategories(catData.categories);
+          setViewState('categories');
+        }
+        return;
+      }
+
+      // Preload next quad images
+      await Promise.all(nextData.items.map((item: ItemData) => preloadImage(buildImageUrl(item))));
+      setQuad(nextData);
+      setImagesReady(true);
+      setCurrentCategoryId(nextData.categoryId);
+      startTimeRef.current = Date.now();
+      setViewState('voting');
+
+    } catch (err: any) {
+      setSelectedWinnerId(null);
+      setShowVoteAnimation(false);
+      setImagesReady(true);
+      if (err.name !== 'AbortError') {
+        setError(err.message || t.error);
+      }
+    } finally {
+      setIsVoting(false);
+      voteInProgressRef.current = false;
+    }
+  }, [quad, isVoting, showVoteAnimation, token, studyId, currentCategoryId, t.error, router]);
+
+  // ===== Init: fetch study + thumbnails + first pair/quad =====
   useEffect(() => {
     if (!isHydrated) return;
     if (!token) { router.replace(`/study/${studyId}`); return; }
@@ -594,7 +774,12 @@ function VotingPageContent() {
         if (!studyRes.ok) throw new Error('Study not found');
         const studyData = await studyRes.json();
         setStudy(studyData);
-        await fetchNextPair(undefined, controller.signal);
+        // Use quad or pair mode based on study setting
+        if (studyData.comparisonMode === 'quad') {
+          await fetchNextQuad(undefined, controller.signal);
+        } else {
+          await fetchNextPair(undefined, controller.signal);
+        }
       } catch (err: any) {
         if (err.name !== 'AbortError') {
           setError(t.error);
@@ -777,13 +962,21 @@ function VotingPageContent() {
     setCurrentCategoryId(categoryId);
     setLastCheckpoint(0);
     setIsLoading(true);
-    fetchNextPair(categoryId);
+    if (isQuadMode) {
+      fetchNextQuad(categoryId);
+    } else {
+      fetchNextPair(categoryId);
+    }
   }
 
   function retryAfterError() {
     setError(null);
     setIsLoading(true);
-    fetchNextPair(currentCategoryId || undefined);
+    if (isQuadMode) {
+      fetchNextQuad(currentCategoryId || undefined);
+    } else {
+      fetchNextPair(currentCategoryId || undefined);
+    }
   }
 
   // Derived
@@ -1084,6 +1277,80 @@ function VotingPageContent() {
   }
 
   // ========== VOTING INTERFACE ==========
+
+  // Quadruplet mode rendering
+  if (isQuadMode && quad) {
+    return (
+      <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
+        {LogoHeader}
+
+        <main className="flex-1 min-h-0 px-3 sm:px-6 pb-2 overflow-hidden">
+          <div className="w-full h-full flex flex-col">
+            {/* 4 images in 2x2 grid */}
+            <div
+              className="flex-1 min-h-0 grid grid-cols-2 gap-2 sm:gap-3 transition-opacity duration-150"
+              style={{ opacity: imagesReady ? 1 : 0 }}
+            >
+              {quad.positions.map((itemId, idx) => {
+                const item = quad.items.find((i) => i.id === itemId)!;
+                const isSelected = showVoteAnimation && selectedWinnerId === itemId;
+                const isNotSelected = showVoteAnimation && selectedWinnerId && selectedWinnerId !== itemId;
+
+                return (
+                  <button
+                    key={itemId}
+                    onClick={() => handleQuadVote(itemId)}
+                    disabled={isVoting || showVoteAnimation}
+                    className={`relative bg-white rounded-xl shadow-sm transition-all duration-200 p-1.5 flex items-center justify-center overflow-hidden
+                      ${isSelected ? 'ring-4 animate-selection-ring' : ''}
+                      ${isNotSelected ? 'animate-fade-out-half' : ''}
+                      ${isVoting || showVoteAnimation ? 'pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
+                      focus:outline-none`}
+                    style={isSelected ? { boxShadow: `0 0 0 4px ${uiConfig.themeColor}` } : undefined}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={buildImageUrl(item)}
+                      alt=""
+                      loading="eager"
+                      decoding="async"
+                      className="max-w-full max-h-full object-contain rounded-lg"
+                    />
+                    {isSelected && uiConfig.voteAnimation === 'thumbs-up' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                        <div className="animate-thumbs-up bg-white/90 p-2 rounded-full shadow-xl">
+                          <ThumbsUp className="w-6 h-6" style={{ color: uiConfig.themeColor }} fill={uiConfig.themeColor} />
+                        </div>
+                      </div>
+                    )}
+                    {isSelected && uiConfig.voteAnimation === 'checkmark' && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                        <div className="animate-thumbs-up bg-white/90 p-2 rounded-full shadow-xl">
+                          <Check className="w-6 h-6" style={{ color: uiConfig.themeColor }} strokeWidth={3} />
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex-none text-center py-2">
+              <p className="text-sm text-slate-500">{study?.participantPrompt || t.selectBest}</p>
+            </div>
+          </div>
+        </main>
+
+        {quad && uiConfig.progressStyle !== 'hidden' && (
+          <footer className="flex-none py-3 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
+            <ProgressBar completed={quad.progress.completed} target={quad.progress.target} themeColor={uiConfig.themeColor} />
+          </footer>
+        )}
+      </div>
+    );
+  }
+
+  // Pair mode rendering (default)
   return (
     <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
       {LogoHeader}

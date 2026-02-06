@@ -52,6 +52,9 @@ model Study {
   // Methodology for PDF export
   methodologyText           String?       @db.Text
 
+  // Comparison mode: affects how many items are shown at once
+  comparisonMode            String        @default("pair")       // "pair" (2 items) | "quad" (4 items, pick best 1)
+
   // UI Customization (for future studies)
   uiThemeColor              String?       // Primary accent color hex, e.g. "#2563EB"
   uiLogoPosition            String?       @default("top-center") // "top-center", "top-left", "hidden"

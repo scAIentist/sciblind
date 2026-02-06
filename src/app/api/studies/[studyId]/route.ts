@@ -31,6 +31,8 @@ export async function GET(
         hasCategorySeparation: true,
         isActive: true,
         comparisonsPerParticipant: true,
+        // Comparison mode
+        comparisonMode: true,
         // UI Customization
         uiThemeColor: true,
         uiLogoPosition: true,

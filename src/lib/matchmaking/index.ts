@@ -26,6 +26,11 @@ export interface MatchPair {
   rightItemId: string;
 }
 
+export interface MatchQuad {
+  items: Item[];           // Exactly 4 items
+  positions: string[];     // Randomized order of item IDs for display
+}
+
 /**
  * Get the set of item IDs that have appeared in session comparisons
  */
@@ -445,4 +450,161 @@ export function getCategoryProgress(
     percentage,
     isComplete: completed >= targetComparisons,
   };
+}
+
+/**
+ * Fisher-Yates shuffle for randomizing array order
+ */
+function shuffleArray<T>(array: T[]): T[] {
+  const result = [...array];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+/**
+ * Select next quadruplet (4 items) for comparison
+ *
+ * The winner of a quadruplet comparison beats all 3 losers, generating 3 pairwise wins.
+ * This is equivalent to 3 pairwise comparisons in terms of ELO updates.
+ *
+ * Algorithm goals:
+ * 1. **COVERAGE**: Prioritize unseen items to ensure every item appears at least once
+ * 2. **FAIRNESS**: Balance comparison counts across items
+ * 3. **VARIETY**: Avoid showing same items repeatedly
+ * 4. **INFORMATION**: Prefer items with similar ELO for more informative comparisons
+ *
+ * @param items - All items in the category
+ * @param sessionComparisons - Comparisons already made in this session
+ * @returns Next quad to compare, or null if not enough items
+ */
+export function selectNextQuad(
+  items: Item[],
+  sessionComparisons: Comparison[],
+): MatchQuad | null {
+  if (items.length < 4) {
+    return null;
+  }
+
+  // Get items seen in this session
+  const seen = getSeenItemIds(sessionComparisons);
+  const unseenItems = items.filter((item) => !seen.has(item.id));
+
+  // Count session appearances
+  const sessionCounts = new Map<string, number>();
+  for (const item of items) {
+    sessionCounts.set(item.id, 0);
+  }
+  for (const comp of sessionComparisons) {
+    sessionCounts.set(comp.itemAId, (sessionCounts.get(comp.itemAId) || 0) + 1);
+    sessionCounts.set(comp.itemBId, (sessionCounts.get(comp.itemBId) || 0) + 1);
+  }
+
+  // Track recently shown items (last 2 comparisons)
+  const recentlyShown = new Set<string>();
+  const recentWindow = Math.min(2, sessionComparisons.length);
+  for (let i = 0; i < recentWindow; i++) {
+    const comp = sessionComparisons[sessionComparisons.length - 1 - i];
+    if (comp) {
+      recentlyShown.add(comp.itemAId);
+      recentlyShown.add(comp.itemBId);
+    }
+  }
+
+  // Score function for item selection (lower = better)
+  const scoreItem = (item: Item): number => {
+    let score = 0;
+    // Prioritize unseen items
+    if (!seen.has(item.id)) score -= 1000;
+    // Prefer items with fewer global comparisons
+    score += item.comparisonCount * 5;
+    // Prefer items with fewer session appearances
+    score += (sessionCounts.get(item.id) || 0) * 20;
+    // Penalize recently shown items
+    if (recentlyShown.has(item.id)) score += 100;
+    return score;
+  };
+
+  // Sort items by score (best first)
+  const sortedItems = [...items].sort((a, b) => scoreItem(a) - scoreItem(b));
+
+  // Select top 4, but ensure variety by not picking all from same ELO band
+  const selected: Item[] = [];
+  const usedIds = new Set<string>();
+
+  // First pass: take top candidates
+  for (const item of sortedItems) {
+    if (selected.length >= 4) break;
+    if (usedIds.has(item.id)) continue;
+
+    // Check ELO diversity - avoid 4 items with nearly identical ELO
+    if (selected.length === 3) {
+      const avgElo = selected.reduce((sum, i) => sum + i.eloRating, 0) / 3;
+      const eloDiff = Math.abs(item.eloRating - avgElo);
+      // If too similar, try to find a more diverse option
+      if (eloDiff < 50 && sortedItems.indexOf(item) < sortedItems.length - 1) {
+        const remaining = sortedItems.slice(sortedItems.indexOf(item) + 1);
+        const diverse = remaining.find((i) =>
+          !usedIds.has(i.id) && Math.abs(i.eloRating - avgElo) >= 50
+        );
+        if (diverse) {
+          selected.push(diverse);
+          usedIds.add(diverse.id);
+          continue;
+        }
+      }
+    }
+
+    selected.push(item);
+    usedIds.add(item.id);
+  }
+
+  if (selected.length < 4) {
+    return null;
+  }
+
+  // Randomize display positions to avoid any position bias
+  const positions = shuffleArray(selected.map((item) => item.id));
+
+  return {
+    items: selected,
+    positions,
+  };
+}
+
+/**
+ * Calculate recommended quad comparisons per reviewer
+ *
+ * Since each quad generates 3 pairwise wins, we need fewer quad comparisons
+ * than pairwise comparisons to achieve the same coverage.
+ *
+ * Coverage: Each quad shows 4 items, so ceil(N/4) quads guarantee all items seen once.
+ * Target: Same statistical power as pairwise, so divide by 3 (approximately).
+ *
+ * @param itemCount - Number of items in the category
+ * @param reviewerCount - Expected number of reviewers
+ * @returns Recommended quad comparisons per reviewer
+ */
+export function calculateRecommendedQuadComparisons(
+  itemCount: number,
+  reviewerCount: number = 5,
+): number {
+  // Hard minimum: ceil(N/4) to guarantee every item can appear at least once
+  const coverageMinimum = Math.ceil(itemCount / 4);
+
+  // Each quad generates 3 pairwise results, so divide pairwise target by ~2.5
+  // (not 3, because we want some redundancy for reliability)
+  const pairwiseTarget = calculateRecommendedComparisons(itemCount, reviewerCount);
+  const statisticalTarget = Math.ceil(pairwiseTarget / 2.5);
+
+  // Take the higher of coverage and statistical targets
+  const recommended = Math.max(coverageMinimum, statisticalTarget);
+
+  // Upper bound for fatigue prevention (quads are faster, so allow more)
+  const maxComparisons = Math.max(40, Math.ceil(itemCount / 2));
+  const minComparisons = coverageMinimum;
+
+  return Math.max(minComparisons, Math.min(maxComparisons, recommended));
 }

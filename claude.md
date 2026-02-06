@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-05 (v4 — Checkpoint Interstitials, Study Settings Admin)
+> Last Updated: 2026-02-06 (v5 — Quadruplet Voting Mode)
 
 ## Project Overview
 
@@ -18,15 +18,15 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Database Schema | Complete | Category, AccessCode, ELO tracking, audit trail, test mode, activity log |
+| Database Schema | Complete | Category, AccessCode, ELO tracking, audit trail, test mode, activity log, comparison mode |
 | Supabase Connection | Complete | PostgreSQL via Transaction Pooler |
 | ELO Ranking System | Complete | Artist boost (+200 to +20), tie-breaking, adaptive K-factor |
 | Bradley-Terry Model | Complete | MLE estimation via MM algorithm, Fisher information SEs |
-| Matchmaking Algorithm | Complete | Two-phase (coverage + depth), full coverage, streak limits, pair exposure |
+| Matchmaking Algorithm | Complete | Two-phase (coverage + depth), full coverage, streak limits, pair/quad modes |
 | Statistical Diagnostics | Complete | Publishable threshold, graph connectivity, circular triads |
 | Access Code Auth | Complete | SHA256 hashing, single-use + test mode support |
 | Admin Auth | Complete | ADMIN_SECRET env var, HTTP-only cookie, middleware protection |
-| Voting API | Complete | Full audit trail, fraud detection, rate limiting |
+| Voting API | Complete | Full audit trail, fraud detection, rate limiting, pair + quad modes |
 | Rankings API | Complete | Admin/participant access control, sensitive field stripping |
 | Audit Export API | Complete | Full comparison log with metadata, JSON format |
 | Activity Logging | Complete | Immutable append-only log for all portal activity |
@@ -179,7 +179,7 @@ The voting page is optimized for perceived instant response:
 
 **Title**: IzVRS Likovni natečaj 2025
 
-**Key Settings**: `allowContinuedVoting=false` (stops at threshold), `uiShowCounts=false`
+**Key Settings**: `comparisonMode=quad`, `allowContinuedVoting=false` (stops at threshold), `uiShowCounts=false`
 
 **Description**: Slepo primerjanje likovnih del učencev za izbor najboljših 12, ki bodo natisnjeni na sledilnikih. Pomagajte nam pri izboru!
 
@@ -195,11 +195,15 @@ The voting page is optimized for perceived instant response:
 | 5. razredi | 50 | 19 (IDs: 79-128) |
 
 **Reviewer Access Codes** (single-use):
-1. IzVRS-ocenjevalec90074
+1. IzVRS-ocenjevalec90074 (USED - completed 3. razredi)
 2. IzVRS-ocenjevalec25793
 3. IzVRS-ocenjevalec85642
 4. IzVRS-ocenjevalec95696
 5. IzVRS-ocenjevalec86339
+6. IzVRS-ocenjevalec36430
+7. IzVRS-ocenjevalec98370
+8. IzVRS-ocenjevalec14944
+9. IzVRS-ocenjevalec29621
 
 **Test Code**: `IzVRS-TEST-MODE`
 - Unlimited uses (no single-use restriction)
@@ -225,7 +229,9 @@ The voting page is optimized for perceived instant response:
 |----------|--------|---------|
 | `/api/participate/[studyId]/auth` | POST | Validate access code, create session |
 | `/api/participate/[studyId]/next-pair` | GET | Get next comparison pair (optimized: single findMany, selective fields) |
-| `/api/participate/[studyId]/vote` | POST | Submit vote, update ELO (skipped for test sessions). Parallelized DB fetches. |
+| `/api/participate/[studyId]/next-quad` | GET | Get next 4 items for quadruplet comparison |
+| `/api/participate/[studyId]/vote` | POST | Submit pairwise vote, update ELO (skipped for test sessions). Parallelized DB fetches. |
+| `/api/participate/[studyId]/vote-quad` | POST | Submit quadruplet vote, creates 3 comparison records (winner vs each loser) |
 | `/api/participate/[studyId]/category-thumbnails` | GET | Get category thumbnail images. Rate-limited (100 req/min/IP). |
 
 ### Admin APIs (all require ADMIN_SECRET auth except `/api/admin/auth`)
@@ -296,7 +302,7 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `src/lib/ranking/elo.ts` | ELO calculation + artist boost + adaptive K |
 | `src/lib/ranking/bradley-terry.ts` | Bradley-Terry MLE estimator (MM algorithm) |
 | `src/lib/ranking/statistics.ts` | Threshold, connectivity, circular triads, SE |
-| `src/lib/matchmaking/index.ts` | Pair selection (coverage + depth + streak limits) |
+| `src/lib/matchmaking/index.ts` | Pair/quad selection (coverage + depth + streak limits) |
 | `src/lib/auth/hash.ts` | Access code SHA256 hashing |
 | `src/lib/logging.ts` | Activity logging (fire-and-forget + sync variants) |
 
@@ -316,7 +322,9 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 |------|---------|
 | `src/app/api/participate/[studyId]/auth/route.ts` | Access code auth, session creation |
 | `src/app/api/participate/[studyId]/next-pair/route.ts` | Next pair with optimized queries |
-| `src/app/api/participate/[studyId]/vote/route.ts` | Vote submission with parallel DB fetches |
+| `src/app/api/participate/[studyId]/next-quad/route.ts` | Next 4 items for quadruplet mode |
+| `src/app/api/participate/[studyId]/vote/route.ts` | Pairwise vote submission with parallel DB fetches |
+| `src/app/api/participate/[studyId]/vote-quad/route.ts` | Quadruplet vote submission (creates 3 comparisons) |
 | `src/app/api/participate/[studyId]/category-thumbnails/route.ts` | Category thumbnails with rate limiting |
 | `src/app/api/admin/auth/route.ts` | Admin login/logout with rate limiting |
 | `src/app/api/admin/dashboard/route.ts` | Global admin dashboard data |
@@ -344,6 +352,8 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `scripts/add-test-code.ts` | Add test access code |
 | `scripts/update-study-text.ts` | Update study text/description |
 | `scripts/update-izvrs-settings.ts` | Update IzVRS study: allowContinuedVoting=false, uiShowCounts=true |
+| `scripts/add-comparison-mode-column.ts` | Add comparisonMode column to Study table |
+| `scripts/verify-data.ts` | Verify study data integrity (items, comparisons, sessions) |
 
 ### Tests
 
@@ -582,6 +592,41 @@ The platform has been comprehensively hardened for scientific defensibility. All
 - If target reached but coverage missing, session continues with extended progress bar
 - Progress bar never shows >99% until both conditions met
 
+### Quadruplet Mode (New in v5)
+
+**Purpose**: Reduce voting time while maintaining statistical power. User sees 4 items, picks 1 best.
+
+**How it works**:
+- 4 items displayed in 2×2 grid
+- User selects the single best item
+- Generates 3 pairwise wins: winner beats each of the 3 losers
+- ELO updated for each pairing individually (winner vs loser1, winner vs loser2, winner vs loser3)
+- No transitivity assumption between losers (they don't play each other)
+
+**Study configuration**:
+- `Study.comparisonMode`: `"pair"` (default) or `"quad"`
+- Per-study setting, stored in database
+
+**API endpoints**:
+- `GET /api/participate/[studyId]/next-quad` — returns 4 items to compare
+- `POST /api/participate/[studyId]/vote-quad` — records selection, creates 3 comparison records
+
+**Target calculation**:
+```typescript
+function calculateRecommendedQuadComparisons(itemCount, reviewerCount = 5) {
+  const coverageMinimum = Math.ceil(itemCount / 4);  // See every item once
+  const pairwiseTarget = Math.ceil((itemCount * 10) / reviewerCount);
+  const statisticalTarget = Math.ceil(pairwiseTarget / 2.5);  // Each quad ≈ 2.5 pairwise votes
+  return Math.min(Math.max(coverageMinimum, statisticalTarget), Math.ceil(itemCount / 2));
+}
+```
+
+**Time savings**: ~4× faster voting (25 quads vs 70 pairs for 49 items)
+
+**Algorithm version**: `sciblind-v2-quad` stored in comparison records
+
+**Legacy pairwise handling**: If a session has existing pairwise comparisons before switching to quad mode, they count toward category completion. The API checks if raw comparison count meets target OR if quad count (comparisons/3) meets target.
+
 ### No duplicate pairs
 - Set-based tracking with sorted keys
 
@@ -686,6 +731,7 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `8a725c9` | Full-screen checkpoint interstitials, progress bar with counter |
 | `64a8ecc` | Add allowContinuedVoting to study config API |
 | `2fc1e44` | Add allowContinuedVoting toggle to admin Study Settings panel |
+| `TBD` | Quadruplet voting mode — 4 items, pick best 1, generates 3 pairwise wins |
 
 ## Known Issues & Fixes
 
