@@ -662,7 +662,7 @@ function VotingPageContent() {
     }
   }
 
-  // ===== handleQuadVote — submit quadruplet vote =====
+  // ===== handleQuadVote — fire-and-forget pattern for speed =====
   const handleQuadVote = useCallback(async (winnerId: string) => {
     if (!quad || isVoting || voteInProgressRef.current || showVoteAnimation) return;
 
@@ -672,9 +672,8 @@ function VotingPageContent() {
     setIsVoting(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
-
-    const votePromise = fetch(`/api/participate/${studyId}/vote-quad`, {
+    // Fire-and-forget vote submission — don't wait for it
+    fetch(`/api/participate/${studyId}/vote-quad`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -685,24 +684,27 @@ function VotingPageContent() {
         categoryId: currentCategoryId,
         responseTimeMs,
       }),
-    }).then(r => r.ok).catch(() => false);
+    }).catch(() => console.warn('Quad vote submission failed'));
+
+    // Start fetching next quad immediately (in parallel with animation)
+    const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
+    nextUrl.searchParams.set('token', token!);
+    if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
+    const nextFetchPromise = fetch(nextUrl.toString()).then(r => r.json());
+
+    // Run animation
+    await new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
+
+    // Fade out current images
+    setImagesReady(false);
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    setSelectedWinnerId(null);
+    setShowVoteAnimation(false);
 
     try {
-      const [, voteOk] = await Promise.all([animationDone, votePromise]);
-      if (!voteOk) console.warn('Quad vote submission failed');
-
-      // Fade out
-      setImagesReady(false);
-      await new Promise(resolve => setTimeout(resolve, 120));
-
-      setSelectedWinnerId(null);
-      setShowVoteAnimation(false);
-
-      // Fetch next quad
-      const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
-      nextUrl.searchParams.set('token', token!);
-      if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
-      const nextData = await fetch(nextUrl.toString()).then(r => r.json());
+      // Now await the already-in-progress fetch
+      const nextData = await nextFetchPromise;
 
       if (nextData.error) {
         if (nextData.errorKey === 'INVALID_SESSION') {
@@ -736,7 +738,7 @@ function VotingPageContent() {
         return;
       }
 
-      // Preload next quad images
+      // Preload next quad images (should be fast since they're already requested)
       await Promise.all(nextData.items.map((item: ItemData) => preloadImage(buildImageUrl(item))));
       setQuad(nextData);
       setImagesReady(true);
@@ -1284,14 +1286,14 @@ function VotingPageContent() {
       <div className="h-[100dvh] flex flex-col bg-slate-100 overflow-hidden">
         {LogoHeader}
 
-        <main className="flex-1 min-h-0 px-3 sm:px-6 pb-2 overflow-hidden">
+        <main className="flex-1 min-h-0 px-2 sm:px-6 pb-1 overflow-hidden">
           <div className="w-full h-full flex flex-col">
-            {/* 4 images in 2x2 grid */}
+            {/* Mobile: 4 stacked rows for larger images, Desktop: 2x2 grid */}
             <div
-              className="flex-1 min-h-0 grid grid-cols-2 gap-2 sm:gap-3 transition-opacity duration-150"
+              className="flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-1.5 sm:gap-3 transition-opacity duration-150"
               style={{ opacity: imagesReady ? 1 : 0 }}
             >
-              {quad.positions.map((itemId, idx) => {
+              {quad.positions.map((itemId) => {
                 const item = quad.items.find((i) => i.id === itemId)!;
                 const isSelected = showVoteAnimation && selectedWinnerId === itemId;
                 const isNotSelected = showVoteAnimation && selectedWinnerId && selectedWinnerId !== itemId;
@@ -1301,7 +1303,7 @@ function VotingPageContent() {
                     key={itemId}
                     onClick={() => handleQuadVote(itemId)}
                     disabled={isVoting || showVoteAnimation}
-                    className={`relative bg-white rounded-xl shadow-sm transition-all duration-200 p-1.5 flex items-center justify-center overflow-hidden
+                    className={`relative bg-white rounded-lg sm:rounded-xl shadow-sm transition-all duration-200 p-1 sm:p-1.5 flex items-center justify-center overflow-hidden
                       ${isSelected ? 'ring-4 animate-selection-ring' : ''}
                       ${isNotSelected ? 'animate-fade-out-half' : ''}
                       ${isVoting || showVoteAnimation ? 'pointer-events-none' : 'active:scale-[0.98] hover:shadow-lg cursor-pointer'}
@@ -1314,19 +1316,19 @@ function VotingPageContent() {
                       alt=""
                       loading="eager"
                       decoding="async"
-                      className="max-w-full max-h-full object-contain rounded-lg"
+                      className="max-w-full max-h-full object-contain rounded-md sm:rounded-lg"
                     />
                     {isSelected && uiConfig.voteAnimation === 'thumbs-up' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg sm:rounded-xl">
                         <div className="animate-thumbs-up bg-white/90 p-2 rounded-full shadow-xl">
-                          <ThumbsUp className="w-6 h-6" style={{ color: uiConfig.themeColor }} fill={uiConfig.themeColor} />
+                          <ThumbsUp className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: uiConfig.themeColor }} fill={uiConfig.themeColor} />
                         </div>
                       </div>
                     )}
                     {isSelected && uiConfig.voteAnimation === 'checkmark' && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-xl">
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/10 rounded-lg sm:rounded-xl">
                         <div className="animate-thumbs-up bg-white/90 p-2 rounded-full shadow-xl">
-                          <Check className="w-6 h-6" style={{ color: uiConfig.themeColor }} strokeWidth={3} />
+                          <Check className="w-5 h-5 sm:w-6 sm:h-6" style={{ color: uiConfig.themeColor }} strokeWidth={3} />
                         </div>
                       </div>
                     )}
@@ -1335,14 +1337,14 @@ function VotingPageContent() {
               })}
             </div>
 
-            <div className="flex-none text-center py-2">
-              <p className="text-sm text-slate-500">{study?.participantPrompt || t.selectBest}</p>
+            <div className="flex-none text-center py-1 sm:py-2">
+              <p className="text-xs sm:text-sm text-slate-500">{study?.participantPrompt || t.selectBest}</p>
             </div>
           </div>
         </main>
 
         {quad && uiConfig.progressStyle !== 'hidden' && (
-          <footer className="flex-none py-3 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
+          <footer className="flex-none py-2 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
             <ProgressBar completed={quad.progress.completed} target={quad.progress.target} themeColor={uiConfig.themeColor} />
           </footer>
         )}
