@@ -105,7 +105,7 @@ export async function GET(
             wins: winCounts.get(item.id) || 0,
           }))
           .sort((a, b) => b.wins - a.wins)
-          .slice(0, 4); // Top 4
+          .slice(0, 10); // Top 10 (expandable from 4)
 
         return {
           categoryId: category.id,

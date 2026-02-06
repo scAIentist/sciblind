@@ -128,6 +128,8 @@ const translations = {
     yourPicks: 'Vaši izbori',
     overall: 'Skupni',
     viewRankings: 'Poglej rezultate',
+    showMore: 'Pokaži več',
+    showLess: 'Pokaži manj',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -177,6 +179,8 @@ const translations = {
     yourPicks: 'Your picks',
     overall: 'Overall',
     viewRankings: 'View rankings',
+    showMore: 'Show more',
+    showLess: 'Show less',
   },
 };
 
@@ -438,6 +442,10 @@ function RankingsComparison({
   themeColor: string;
   t: typeof translations.sl;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const displayCount = expanded ? 10 : 4;
+  const canExpand = personalItems.length > 4 || globalItems.length > 4;
+
   const RankBadge = ({ rank }: { rank: number }) => (
     <div
       className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
@@ -447,41 +455,56 @@ function RankingsComparison({
     </div>
   );
 
-  const ItemGrid = ({ items, label }: { items: typeof personalItems; label: string }) => (
-    <div className="flex-1">
-      <h4 className="text-xs text-slate-400 mb-2 uppercase tracking-wide text-center">{label}</h4>
-      <div className="grid grid-cols-2 gap-1.5">
-        {items.slice(0, 4).map((item, idx) => (
-          <div key={item.id} className="relative">
-            <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
-              {item.imageUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-500">#{idx + 1}</div>
-              )}
+  const ItemGrid = ({ items, label }: { items: typeof personalItems; label: string }) => {
+    const displayItems = items.slice(0, displayCount);
+    const gridCols = expanded ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2';
+
+    return (
+      <div className="flex-1">
+        <h4 className="text-xs text-slate-400 mb-2 uppercase tracking-wide text-center">{label}</h4>
+        <div className={`grid ${gridCols} gap-1.5`}>
+          {displayItems.map((item, idx) => (
+            <div key={item.id} className="relative">
+              <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
+                {item.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-slate-500">#{idx + 1}</div>
+                )}
+              </div>
+              <RankBadge rank={idx + 1} />
             </div>
-            <RankBadge rank={idx + 1} />
-          </div>
-        ))}
-        {/* Empty slots if less than 4 items */}
-        {items.length < 4 && Array.from({ length: 4 - items.length }).map((_, i) => (
-          <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
-        ))}
+          ))}
+          {/* Empty slots to fill grid */}
+          {!expanded && displayItems.length < 4 && Array.from({ length: 4 - displayItems.length }).map((_, i) => (
+            <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
+          ))}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="bg-slate-800/50 rounded-xl p-4">
       {categoryName && (
         <h3 className="font-medium text-white text-sm mb-3 text-center">{categoryName}</h3>
       )}
-      <div className="flex gap-4">
+      <div className={`flex gap-4 ${expanded ? 'flex-col' : ''}`}>
         <ItemGrid items={personalItems} label={t.yourPicks} />
-        <div className="w-px bg-slate-700" /> {/* Divider */}
+        {!expanded && <div className="w-px bg-slate-700" />} {/* Divider only when side-by-side */}
+        {expanded && <div className="h-px bg-slate-700 my-2" />} {/* Horizontal divider when stacked */}
         <ItemGrid items={globalItems} label={t.overall} />
       </div>
+      {canExpand && (
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-full mt-3 py-2 text-sm text-slate-400 hover:text-white transition-colors flex items-center justify-center gap-1"
+        >
+          {expanded ? t.showLess : t.showMore}
+          <ChevronRight className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        </button>
+      )}
     </div>
   );
 }
@@ -606,13 +629,13 @@ function VotingPageContent() {
       const res = await fetch(`/api/studies/${studyId}/rankings`);
       if (res.ok) {
         const data = await res.json();
-        // Transform to CategoryRanking format - top 4 per category
+        // Transform to CategoryRanking format - top 10 per category (expandable from 4)
         const rankings: CategoryRanking[] = data.categories.map((cat: { id: string; name: string }) => ({
           categoryId: cat.id,
           categoryName: cat.name,
           topItems: data.rankings
             .filter((r: { categoryId: string }) => r.categoryId === cat.id)
-            .slice(0, 4)
+            .slice(0, 10)
             .map((r: { id: string; imageKey?: string; winCount?: number }) => ({
               id: r.id,
               imageUrl: r.imageKey ? `${SUPABASE_STORAGE_URL}/${r.imageKey.replace('izvrs/', '')}` : null,
@@ -1367,6 +1390,14 @@ function VotingPageContent() {
     return (
       <div className="min-h-[100dvh] bg-slate-900 p-6 overflow-auto">
         <div className="max-w-lg mx-auto animate-fade-in">
+          {/* Logo */}
+          {displayLogoUrl && (
+            <div className="text-center mb-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={displayLogoUrl} alt="Logo" className="h-12 w-auto object-contain mx-auto opacity-90" />
+            </div>
+          )}
+
           {/* Header */}
           <div className="text-center mb-6">
             <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
