@@ -20,9 +20,9 @@ const STUDY_ID = 'cml808mzc0000m104un333c69';
 async function main() {
   console.log('=== Cleanup Ocenjevalec 1 Session ===\n');
 
-  // Find the used code
+  // Find the used code (label was fixed to Ocenjevalec 90074)
   const usedCode = await prisma.accessCode.findFirst({
-    where: { studyId: STUDY_ID, label: 'Ocenjevalec 1' }
+    where: { studyId: STUDY_ID, label: 'Ocenjevalec 90074' }
   });
 
   if (!usedCode) {

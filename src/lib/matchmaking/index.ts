@@ -608,3 +608,65 @@ export function calculateRecommendedQuadComparisons(
 
   return Math.max(minComparisons, Math.min(maxComparisons, recommended));
 }
+
+/**
+ * Get unique winner IDs from session comparisons
+ * Used to determine which items have won at least once in this session.
+ *
+ * @param sessionComparisons - All comparisons in the session
+ * @returns Set of item IDs that have been selected as winners
+ */
+export function getSessionWinnerIds(sessionComparisons: Comparison[]): Set<string> {
+  const winnerIds = new Set<string>();
+  for (const comp of sessionComparisons) {
+    if (comp.winnerId) {
+      winnerIds.add(comp.winnerId);
+    }
+  }
+  return winnerIds;
+}
+
+/**
+ * Calculate extra tournament quads needed to determine clear top 4.
+ *
+ * After coverage phase, we have W winners. We need additional quads
+ * featuring only winners to narrow down to a clear top 4.
+ *
+ * Logic:
+ * - If W <= 4, no tournament needed (already have top 4)
+ * - Otherwise, estimate (W - 4) / 2 extra quads, clamped to 3-5 range
+ *
+ * @param winnerCount - Number of unique winners from coverage phase
+ * @returns Number of additional tournament quads (0, or 3-5)
+ */
+export function calculateTournamentQuads(winnerCount: number): number {
+  if (winnerCount <= 4) return 0;
+  const estimated = Math.ceil((winnerCount - 4) / 2);
+  return Math.min(5, Math.max(3, estimated));
+}
+
+/**
+ * Select next quadruplet from WINNERS ONLY (items that won at least once).
+ * Used in tournament phase after coverage is complete.
+ *
+ * Returns null if fewer than 4 winners exist (need more coverage voting).
+ *
+ * @param items - All items in the category
+ * @param sessionComparisons - Comparisons already made in this session
+ * @returns Next quad of winners, or null if not enough winners
+ */
+export function selectNextQuadWinnersOnly(
+  items: Item[],
+  sessionComparisons: Comparison[],
+): MatchQuad | null {
+  const winnerIds = getSessionWinnerIds(sessionComparisons);
+  const winnerItems = items.filter((item) => winnerIds.has(item.id));
+
+  // Need at least 4 winners to form a quad
+  if (winnerItems.length < 4) {
+    return null;
+  }
+
+  // Use existing selectNextQuad logic but with winners-only pool
+  return selectNextQuad(winnerItems, sessionComparisons);
+}

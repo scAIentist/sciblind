@@ -16,6 +16,9 @@ import {
   hasFullCoverage,
   calculateRecommendedComparisons,
   getCategoryProgress,
+  getSessionWinnerIds,
+  calculateTournamentQuads,
+  selectNextQuadWinnersOnly,
 } from '@/lib/matchmaking';
 
 // Helper to create mock items
@@ -255,5 +258,73 @@ describe('getCategoryProgress', () => {
     const progress = getCategoryProgress(comparisons, 'cat-1', 10);
     expect(progress.isComplete).toBe(true);
     expect(progress.percentage).toBe(100);
+  });
+});
+
+describe('Tournament Phase', () => {
+  it('getSessionWinnerIds returns unique winners', () => {
+    const comparisons = [
+      createMockComparison('item-0', 'item-1', 'item-0'),
+      createMockComparison('item-0', 'item-2', 'item-0'), // item-0 wins again
+      createMockComparison('item-1', 'item-2', 'item-1'),
+      createMockComparison('item-2', 'item-3', 'item-2'),
+    ];
+    const winners = getSessionWinnerIds(comparisons);
+    expect(winners.size).toBe(3); // item-0, item-1, item-2
+    expect(winners.has('item-0')).toBe(true);
+    expect(winners.has('item-1')).toBe(true);
+    expect(winners.has('item-2')).toBe(true);
+    expect(winners.has('item-3')).toBe(false);
+  });
+
+  it('calculateTournamentQuads returns 0 for 4 or fewer winners', () => {
+    expect(calculateTournamentQuads(0)).toBe(0);
+    expect(calculateTournamentQuads(1)).toBe(0);
+    expect(calculateTournamentQuads(4)).toBe(0);
+  });
+
+  it('calculateTournamentQuads returns 3-5 quads for moderate winner counts', () => {
+    expect(calculateTournamentQuads(6)).toBe(3);
+    expect(calculateTournamentQuads(8)).toBe(3);
+    expect(calculateTournamentQuads(10)).toBe(3);
+    expect(calculateTournamentQuads(12)).toBe(4);
+    expect(calculateTournamentQuads(15)).toBe(5);
+    expect(calculateTournamentQuads(20)).toBe(5);
+  });
+
+  it('calculateTournamentQuads caps at 5', () => {
+    expect(calculateTournamentQuads(50)).toBe(5);
+    expect(calculateTournamentQuads(100)).toBe(5);
+  });
+
+  it('selectNextQuadWinnersOnly returns null with < 4 winners', () => {
+    const items = createMockItems(10);
+    const comparisons = [
+      createMockComparison('item-0', 'item-1', 'item-0'),
+      createMockComparison('item-1', 'item-2', 'item-1'),
+    ];
+    // Only 2 winners: item-0, item-1
+    expect(selectNextQuadWinnersOnly(items, comparisons)).toBeNull();
+  });
+
+  it('selectNextQuadWinnersOnly returns quad with winners only', () => {
+    const items = createMockItems(10);
+    // Create comparisons with at least 4 unique winners
+    const comparisons = [
+      createMockComparison('item-0', 'item-1', 'item-0'),
+      createMockComparison('item-2', 'item-3', 'item-2'),
+      createMockComparison('item-4', 'item-5', 'item-4'),
+      createMockComparison('item-6', 'item-7', 'item-6'),
+    ];
+    // Winners: item-0, item-2, item-4, item-6
+
+    const quad = selectNextQuadWinnersOnly(items, comparisons);
+    expect(quad).not.toBeNull();
+
+    // All items in the quad should be winners
+    const winners = getSessionWinnerIds(comparisons);
+    for (const itemId of quad!.positions) {
+      expect(winners.has(itemId)).toBe(true);
+    }
   });
 });

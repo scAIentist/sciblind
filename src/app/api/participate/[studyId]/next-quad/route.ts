@@ -9,7 +9,14 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { selectNextQuad, calculateRecommendedQuadComparisons, hasFullCoverage } from '@/lib/matchmaking';
+import {
+  selectNextQuad,
+  selectNextQuadWinnersOnly,
+  calculateRecommendedQuadComparisons,
+  calculateTournamentQuads,
+  getSessionWinnerIds,
+  hasFullCoverage,
+} from '@/lib/matchmaking';
 import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security/rate-limit';
 import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
 
@@ -98,7 +105,7 @@ export async function GET(
 
       const categoryProgress = study.categories.map((cat) => {
         const catItems = allItems.filter((i) => i.categoryId === cat.id);
-        const targetComparisons = calculateRecommendedQuadComparisons(catItems.length, 5);
+        const baseTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
         const catComparisons = sessionComparisons.filter((c) => c.categoryId === cat.id);
         // For quads, count unique quad-votes (each quad creates multiple comparison records)
         // We'll track by dividing comparison count by 3 (each quad = 3 comparisons)
@@ -110,11 +117,17 @@ export async function GET(
         // Legacy pairwise comparisons count as 1 each toward target (they're actual votes)
         // If remainder != 0, we have legacy pairwise comparisons
         // Best estimate: if count > target*3, likely pairwise-heavy - count raw comparisons
-        const isPairwiseHeavy = rawCount > 0 && (remainder > 0 || rawCount >= targetComparisons);
+        const isPairwiseHeavy = rawCount > 0 && (remainder > 0 || rawCount >= baseTarget);
         const quadCount = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawCount / 2)) : perfectQuads;
         const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
-        // ALWAYS require coverage for completion, even for legacy pairwise
-        const isComplete = quadCount >= targetComparisons && catCoverage;
+
+        // Tournament phase: Add extra quads for winner refinement
+        const winnerIds = getSessionWinnerIds(catComparisons as any);
+        const tournamentQuads = calculateTournamentQuads(winnerIds.size);
+        const extendedTarget = baseTarget + tournamentQuads;
+
+        // ALWAYS require coverage AND extended target for completion
+        const isComplete = quadCount >= extendedTarget && catCoverage;
 
         return {
           id: cat.id,
@@ -123,8 +136,8 @@ export async function GET(
           displayOrder: cat.displayOrder,
           itemCount: catItems.length,
           completed: quadCount,
-          target: targetComparisons,
-          percentage: Math.min(100, Math.round((quadCount / targetComparisons) * 100)),
+          target: extendedTarget,
+          percentage: Math.min(100, Math.round((quadCount / extendedTarget) * 100)),
           isComplete,
         };
       });
@@ -167,18 +180,28 @@ export async function GET(
     });
 
     // Calculate progress (quads = comparisons / 3, with legacy pairwise handling)
-    const targetQuads = calculateRecommendedQuadComparisons(items.length, 5);
+    const baseTarget = calculateRecommendedQuadComparisons(items.length, 5);
     const rawComparisons = sessionComparisons.length;
     const perfectQuads = Math.floor(rawComparisons / 3);
     const remainder = rawComparisons % 3;
     // Handle legacy pairwise comparisons (count them as equivalent coverage)
-    const isPairwiseHeavy = rawComparisons > 0 && (remainder > 0 || rawComparisons >= targetQuads);
+    const isPairwiseHeavy = rawComparisons > 0 && (remainder > 0 || rawComparisons >= baseTarget);
     const completedQuads = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawComparisons / 2)) : perfectQuads;
     const coverageAchieved = hasFullCoverage(items, sessionComparisons as any);
 
-    // Check completion - ALWAYS require coverage, even for legacy pairwise
-    // This ensures every item has been shown at least once before completion
-    if (completedQuads >= targetQuads && coverageAchieved) {
+    // Tournament phase: Calculate extended target for winner refinement
+    // This adds 3-5 extra quads after coverage is complete, featuring only winners
+    const winnerIds = getSessionWinnerIds(sessionComparisons as any);
+    const tournamentQuads = calculateTournamentQuads(winnerIds.size);
+    const extendedTarget = baseTarget + tournamentQuads;
+
+    // Determine phase
+    const coveragePhaseComplete = completedQuads >= baseTarget && coverageAchieved;
+    const inTournamentPhase = coveragePhaseComplete && completedQuads < extendedTarget;
+
+    // Check completion - require EXTENDED target AND coverage
+    // This ensures tournament phase completes before category is done
+    if (completedQuads >= extendedTarget && coverageAchieved) {
       // Category complete
       if (study.hasCategorySeparation) {
         // Check all categories
@@ -194,13 +217,17 @@ export async function GET(
 
         const allComplete = study.categories.every((cat) => {
           const catItems = allItems.filter((i) => i.categoryId === cat.id);
-          const catTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
+          const catBaseTarget = calculateRecommendedQuadComparisons(catItems.length, 5);
           const catComps = allSessionComps.filter((c) => c.categoryId === cat.id);
           const rawCount = catComps.length;
           const quadCount = Math.floor(rawCount / 3);
-          // ALWAYS require coverage for completion
+          // Calculate extended target for this category
+          const catWinnerIds = getSessionWinnerIds(catComps as any);
+          const catTournamentQuads = calculateTournamentQuads(catWinnerIds.size);
+          const catExtendedTarget = catBaseTarget + catTournamentQuads;
+          // ALWAYS require coverage AND extended target for completion
           const catCoverage = hasFullCoverage(catItems as any, catComps as any);
-          return quadCount >= catTarget && catCoverage;
+          return quadCount >= catExtendedTarget && catCoverage;
         });
 
         if (allComplete) {
@@ -220,14 +247,25 @@ export async function GET(
           categoryComplete: true,
           categoryId,
           comparisonsInCategory: completedQuads,
-          targetComparisons: targetQuads,
+          targetComparisons: extendedTarget,
         },
         { headers: rateLimitHeaders }
       );
     }
 
-    // Select next quad
-    const quad = selectNextQuad(items, sessionComparisons as any);
+    // Select next quad - use winners-only in tournament phase for more refined rankings
+    let quad;
+    if (inTournamentPhase) {
+      // Tournament phase: select from winners only to refine top 4
+      quad = selectNextQuadWinnersOnly(items, sessionComparisons as any);
+      if (!quad) {
+        // Fallback to regular selection if not enough winners
+        quad = selectNextQuad(items, sessionComparisons as any);
+      }
+    } else {
+      // Coverage phase: regular selection to ensure all items are seen
+      quad = selectNextQuad(items, sessionComparisons as any);
+    }
 
     if (!quad) {
       return NextResponse.json(
@@ -254,8 +292,8 @@ export async function GET(
         categoryId,
         progress: {
           completed: completedQuads,
-          target: targetQuads,
-          percentage: Math.min(99, Math.round((completedQuads / targetQuads) * 100)),
+          target: extendedTarget,
+          percentage: Math.min(99, Math.round((completedQuads / extendedTarget) * 100)),
         },
       },
       { headers: rateLimitHeaders }

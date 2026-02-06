@@ -156,6 +156,7 @@ export async function GET(
         id: item.id,
         categoryId: item.categoryId,
         categoryName: item.category?.name,
+        imageKey: item.imageKey, // For thumbnail display in rankings
         eloRating: Math.round(item.eloRating * 10) / 10,
         comparisonCount: item.comparisonCount,
         winCount: item.winCount,

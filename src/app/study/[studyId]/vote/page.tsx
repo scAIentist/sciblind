@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ThumbsUp, Check, ChevronRight } from 'lucide-react';
+import { ThumbsUp, Check, ChevronRight, X } from 'lucide-react';
 
 // ========== Types ==========
 
@@ -124,6 +124,10 @@ const translations = {
     // Quadruplet mode
     selectBest: 'Izberite najboljšo sliko od štirih.',
     tapBestImage: 'Pritisnite na sliko, ki se vam zdi najboljša',
+    // Side-by-side rankings
+    yourPicks: 'Vaši izbori',
+    overall: 'Skupni',
+    viewRankings: 'Poglej rezultate',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -169,6 +173,10 @@ const translations = {
     // Quadruplet mode
     selectBest: 'Select the best image from the four.',
     tapBestImage: 'Tap the image you think is best',
+    // Side-by-side rankings
+    yourPicks: 'Your picks',
+    overall: 'Overall',
+    viewRankings: 'View rankings',
   },
 };
 
@@ -415,6 +423,69 @@ function ThumbnailGrid({ imageKeys, isComplete }: { imageKeys: string[]; isCompl
   );
 }
 
+// ========== Rankings Comparison Component (Personal vs Global) ==========
+
+function RankingsComparison({
+  categoryName,
+  personalItems,
+  globalItems,
+  themeColor,
+  t,
+}: {
+  categoryName: string;
+  personalItems: { id: string; imageUrl: string | null; wins: number }[];
+  globalItems: { id: string; imageUrl: string | null; wins: number }[];
+  themeColor: string;
+  t: typeof translations.sl;
+}) {
+  const RankBadge = ({ rank }: { rank: number }) => (
+    <div
+      className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
+      style={{ backgroundColor: rank === 1 ? '#F59E0B' : rank === 2 ? '#94A3B8' : rank === 3 ? '#CD7F32' : themeColor }}
+    >
+      {rank}
+    </div>
+  );
+
+  const ItemGrid = ({ items, label }: { items: typeof personalItems; label: string }) => (
+    <div className="flex-1">
+      <h4 className="text-xs text-slate-400 mb-2 uppercase tracking-wide text-center">{label}</h4>
+      <div className="grid grid-cols-2 gap-1.5">
+        {items.slice(0, 4).map((item, idx) => (
+          <div key={item.id} className="relative">
+            <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
+              {item.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-slate-500">#{idx + 1}</div>
+              )}
+            </div>
+            <RankBadge rank={idx + 1} />
+          </div>
+        ))}
+        {/* Empty slots if less than 4 items */}
+        {items.length < 4 && Array.from({ length: 4 - items.length }).map((_, i) => (
+          <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
+        ))}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="bg-slate-800/50 rounded-xl p-4">
+      {categoryName && (
+        <h3 className="font-medium text-white text-sm mb-3 text-center">{categoryName}</h3>
+      )}
+      <div className="flex gap-4">
+        <ItemGrid items={personalItems} label={t.yourPicks} />
+        <div className="w-px bg-slate-700" /> {/* Divider */}
+        <ItemGrid items={globalItems} label={t.overall} />
+      </div>
+    </div>
+  );
+}
+
 // ========== Main Voting Page Content ==========
 
 function VotingPageContent() {
@@ -454,6 +525,11 @@ function VotingPageContent() {
   // Personal rankings for complete screen
   const [personalRankings, setPersonalRankings] = useState<CategoryRanking[]>([]);
   const [rankingsLoading, setRankingsLoading] = useState(false);
+  // Global rankings for side-by-side comparison
+  const [globalRankings, setGlobalRankings] = useState<CategoryRanking[]>([]);
+  // Rankings modal state
+  const [showRankingsModal, setShowRankingsModal] = useState(false);
+  const [rankingsModalCategoryId, setRankingsModalCategoryId] = useState<string | null>(null);
   // Quadruplet mode state
   const [quad, setQuad] = useState<QuadData | null>(null);
 
@@ -523,6 +599,30 @@ function VotingPageContent() {
     } catch { /* non-critical */ }
     setRankingsLoading(false);
   }, [studyId, token]);
+
+  // Fetch global rankings for side-by-side comparison
+  const fetchGlobalRankings = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/studies/${studyId}/rankings`);
+      if (res.ok) {
+        const data = await res.json();
+        // Transform to CategoryRanking format - top 4 per category
+        const rankings: CategoryRanking[] = data.categories.map((cat: { id: string; name: string }) => ({
+          categoryId: cat.id,
+          categoryName: cat.name,
+          topItems: data.rankings
+            .filter((r: { categoryId: string }) => r.categoryId === cat.id)
+            .slice(0, 4)
+            .map((r: { id: string; imageKey?: string; winCount?: number }) => ({
+              id: r.id,
+              imageUrl: r.imageKey ? `${SUPABASE_STORAGE_URL}/${r.imageKey.replace('izvrs/', '')}` : null,
+              wins: r.winCount || 0,
+            })),
+        }));
+        setGlobalRankings(rankings);
+      }
+    } catch { /* non-critical */ }
+  }, [studyId]);
 
   // ===== fetchNextPair — used for initial load and category selection =====
   async function fetchNextPair(categoryId?: string, signal?: AbortSignal) {
@@ -808,12 +908,13 @@ function VotingPageContent() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [viewState, pair, isVoting, showVoteAnimation]);
 
-  // Fetch personal rankings when session completes
+  // Fetch personal and global rankings when session/category completes
   useEffect(() => {
-    if (viewState === 'complete') {
+    if (viewState === 'complete' || viewState === 'categoryDone') {
       fetchPersonalRankings();
+      fetchGlobalRankings();
     }
-  }, [viewState, fetchPersonalRankings]);
+  }, [viewState, fetchPersonalRankings, fetchGlobalRankings]);
 
   // ===== handleVote — vote must complete before next-pair to avoid race condition =====
   const handleVote = useCallback(async (winnerId: string) => {
@@ -1070,42 +1171,19 @@ function VotingPageContent() {
               <p className="text-slate-400 text-sm mb-6 text-center max-w-md mx-auto">{t.yourTopPicksDesc}</p>
 
               <div className="space-y-6">
-                {personalRankings.map((category) => (
-                  <div key={category.categoryId} className="bg-slate-800/50 rounded-xl p-4">
-                    <h3 className="font-medium text-white text-sm mb-3">{category.categoryName}</h3>
-                    <div className="grid grid-cols-4 gap-2">
-                      {category.topItems.map((item, idx) => (
-                        <div key={item.id} className="relative">
-                          <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
-                            {item.imageUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={item.imageUrl}
-                                alt=""
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-slate-500">
-                                #{idx + 1}
-                              </div>
-                            )}
-                          </div>
-                          {/* Rank badge */}
-                          <div
-                            className="absolute -top-1.5 -left-1.5 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
-                            style={{ backgroundColor: idx === 0 ? '#F59E0B' : idx === 1 ? '#94A3B8' : idx === 2 ? '#CD7F32' : uiConfig.themeColor }}
-                          >
-                            {idx + 1}
-                          </div>
-                        </div>
-                      ))}
-                      {/* Empty slots if less than 4 items */}
-                      {category.topItems.length < 4 && Array.from({ length: 4 - category.topItems.length }).map((_, i) => (
-                        <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                {personalRankings.map((category) => {
+                  const globalCat = globalRankings.find(g => g.categoryId === category.categoryId);
+                  return (
+                    <RankingsComparison
+                      key={category.categoryId}
+                      categoryName={category.categoryName}
+                      personalItems={category.topItems}
+                      globalItems={globalCat?.topItems || []}
+                      themeColor={uiConfig.themeColor}
+                      t={t}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1198,7 +1276,20 @@ function VotingPageContent() {
                     </div>
                   )}
 
-                  {!cat.isComplete && (
+                  {cat.isComplete ? (
+                    <button
+                      onClick={() => {
+                        setRankingsModalCategoryId(cat.id);
+                        fetchPersonalRankings();
+                        fetchGlobalRankings();
+                        setShowRankingsModal(true);
+                      }}
+                      className="w-full mt-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg font-semibold text-sm uppercase tracking-wide transition-all flex items-center justify-center gap-2"
+                    >
+                      {t.completed}: {t.viewRankings}
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  ) : (
                     <button
                       onClick={() => selectCategory(cat.id)}
                       className="w-full mt-1 py-2.5 text-white rounded-lg font-semibold text-sm uppercase tracking-wide active:scale-[0.98] transition-all flex items-center justify-center gap-2"
@@ -1464,6 +1555,39 @@ function VotingPageContent() {
         <footer className="flex-none py-3 sm:py-4 bg-white/80 backdrop-blur-sm border-t border-slate-200/50">
           <ProgressBar completed={pair.progress.completed} target={pair.progress.target} themeColor={uiConfig.themeColor} />
         </footer>
+      )}
+
+      {/* Rankings Modal */}
+      {showRankingsModal && rankingsModalCategoryId && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-slate-900 rounded-2xl max-w-lg w-full p-6 relative">
+            <button
+              onClick={() => setShowRankingsModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <h2 className="text-xl font-bold text-white mb-4 text-center">
+              {categories.find(c => c.id === rankingsModalCategoryId)?.name}
+            </h2>
+            {rankingsLoading ? (
+              <div className="py-8 text-center">
+                <div
+                  className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                  style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+                />
+              </div>
+            ) : (
+              <RankingsComparison
+                categoryName=""
+                personalItems={personalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                globalItems={globalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                themeColor={uiConfig.themeColor}
+                t={t}
+              />
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
