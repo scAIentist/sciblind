@@ -662,7 +662,7 @@ function VotingPageContent() {
     }
   }
 
-  // ===== handleQuadVote — fire-and-forget pattern for speed =====
+  // ===== handleQuadVote — must await vote to prevent race condition =====
   const handleQuadVote = useCallback(async (winnerId: string) => {
     if (!quad || isVoting || voteInProgressRef.current || showVoteAnimation) return;
 
@@ -672,8 +672,11 @@ function VotingPageContent() {
     setIsVoting(true);
     const responseTimeMs = Date.now() - startTimeRef.current;
 
-    // Fire-and-forget vote submission — don't wait for it
-    fetch(`/api/participate/${studyId}/vote-quad`, {
+    // Start animation timer (runs in parallel with vote)
+    const animationDone = new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
+
+    // Submit vote — MUST complete before fetching next quad to prevent race condition
+    const votePromise = fetch(`/api/participate/${studyId}/vote-quad`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -684,27 +687,25 @@ function VotingPageContent() {
         categoryId: currentCategoryId,
         responseTimeMs,
       }),
-    }).catch(() => console.warn('Quad vote submission failed'));
-
-    // Start fetching next quad immediately (in parallel with animation)
-    const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
-    nextUrl.searchParams.set('token', token!);
-    if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
-    const nextFetchPromise = fetch(nextUrl.toString()).then(r => r.json());
-
-    // Run animation
-    await new Promise(resolve => setTimeout(resolve, VOTE_ANIMATION_DURATION));
-
-    // Fade out current images
-    setImagesReady(false);
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    setSelectedWinnerId(null);
-    setShowVoteAnimation(false);
+    }).then(r => r.ok).catch(() => false);
 
     try {
-      // Now await the already-in-progress fetch
-      const nextData = await nextFetchPromise;
+      // Wait for BOTH vote and animation to complete before fetching next quad
+      const [, voteOk] = await Promise.all([animationDone, votePromise]);
+      if (!voteOk) console.warn('Quad vote submission failed, continuing anyway');
+
+      // NOW fetch next quad (vote is guaranteed committed)
+      const nextUrl = new URL(`/api/participate/${studyId}/next-quad`, window.location.origin);
+      nextUrl.searchParams.set('token', token!);
+      if (currentCategoryId) nextUrl.searchParams.set('categoryId', currentCategoryId);
+      const nextData = await fetch(nextUrl.toString()).then(r => r.json());
+
+      // Fade out current images
+      setImagesReady(false);
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      setSelectedWinnerId(null);
+      setShowVoteAnimation(false);
 
       if (nextData.error) {
         if (nextData.errorKey === 'INVALID_SESSION') {
