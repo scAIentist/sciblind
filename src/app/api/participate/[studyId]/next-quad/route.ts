@@ -93,15 +93,17 @@ export async function GET(
 
     // Handle category selection if needed
     if (study.hasCategorySeparation && !categoryId) {
-      const allItems = await prisma.item.findMany({
-        where: { studyId },
-        select: { id: true, categoryId: true },
-      });
-
-      const sessionComparisons = await prisma.comparison.findMany({
-        where: { sessionId: session.id },
-        select: { id: true, itemAId: true, itemBId: true, categoryId: true },
-      });
+      // OPTIMIZED: Parallel fetch of items and comparisons
+      const [allItems, sessionComparisons] = await Promise.all([
+        prisma.item.findMany({
+          where: { studyId },
+          select: { id: true, categoryId: true },
+        }),
+        prisma.comparison.findMany({
+          where: { sessionId: session.id },
+          select: { id: true, itemAId: true, itemBId: true, categoryId: true },
+        }),
+      ]);
 
       const categoryProgress = study.categories.map((cat) => {
         const catItems = allItems.filter((i) => i.categoryId === cat.id);

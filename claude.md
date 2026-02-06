@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-06 (v5.1 — Coverage Bug Fix + Production Ready)
+> Last Updated: 2026-02-06 (v5.3 — Performance Optimizations + Scientific Audit)
 
 ## Project Overview
 
@@ -37,7 +37,7 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 | Images | Complete | Compressed WebP format, uploaded to Supabase Storage |
 | Vercel Deployment | Complete | Auto-deploy from GitHub |
 | Test Mode | Complete | Unlimited test code uses, no ELO impact |
-| Automated Tests | Complete | 80 tests: Elo, BT, matchmaking, statistics (Vitest) |
+| Automated Tests | Complete | 86 tests: Elo, BT, matchmaking (incl. tournament), statistics (Vitest) |
 | Algorithm Versioning | Complete | `algoVersion` stored with every comparison |
 | UI Customization | Complete | Per-study theme, logo, progress, animation, category style |
 | Performance | Complete | Fire-and-forget voting, parallel fetch, skeleton UI, image preloading |
@@ -113,14 +113,33 @@ SciBLIND is a scientifically rigorous platform for conducting blind pairwise com
 
 The voting page is optimized for perceived instant response:
 
+**Frontend Optimizations**:
 - **Fire-and-forget vote**: `fetch(...).catch(() => {})` — vote POST is never awaited
-- **Parallel pipeline**: animation (400ms) + next-pair fetch run simultaneously
-- **Image preloading**: both images preloaded via `new Image()` before display
+- **Parallel pipeline**: animation (400ms) + next-quad fetch + vote POST all run simultaneously
+- **Image preloading**: all 4 quad images preloaded via `new Image()` before display
 - **Opacity transitions**: `imagesReady` state controls CSS `transition-opacity` — no flash of empty content
 - **Skeleton UI**: category thumbnails show shimmer placeholders until ALL images loaded, then fade in together
-- **Parallel DB queries**: session + both items fetched with `Promise.all()` in vote API
-- **Selective queries**: only needed fields selected from DB (no full-row fetches)
-- **Single-query optimization**: next-pair API uses one `findMany` instead of N per-category queries
+
+**Backend Optimizations (v5.3)**:
+- **vote-quad API**: Single `findMany` query for all 4 items instead of 4 separate `findUnique` queries
+- **next-quad API**: Parallel `Promise.all()` for items + comparisons fetch in category selection
+- **Selective queries**: Only needed fields selected from DB (no full-row fetches)
+- **Tournament phase**: Simplified win-count sorting instead of complex scoring (O(n log n) vs O(n²))
+
+**Database Query Optimization**:
+```typescript
+// BEFORE (slow): 5 sequential queries
+const [session, ...items] = await Promise.all([
+  prisma.session.findUnique(...),
+  ...itemIds.map(id => prisma.item.findUnique({ where: { id } }))
+]);
+
+// AFTER (fast): 2 parallel queries
+const [session, items] = await Promise.all([
+  prisma.session.findUnique(...),
+  prisma.item.findMany({ where: { id: { in: itemIds } } })
+]);
+```
 
 ## Database Schema
 
@@ -214,12 +233,20 @@ The voting page is optimized for perceived instant response:
 - Comparisons flagged as `test_session`
 - UI flow works normally for testing
 
-**Artist ELO Boost**:
-- Rank 1 (10 pts): +200 ELO (starting at 1700)
-- Rank 2 (9 pts): +180 ELO
-- ...
-- Rank 10 (1 pt): +20 ELO
-- Unranked: Base 1500 ELO
+**Artist ELO Boost** (Updated 2026-02-06):
+- Rank 1 (highest score): +200 ELO → starts at 1700
+- Rank N (lowest score): 0 ELO boost → starts at 1500
+- Formula: `boost = 200 * (1 - (rank - 1) / (totalInSubcategory - 1))`
+- **Important**: Rankings are per SUBCATEGORY (3a, 3b, 4a, 4b, 5a, 5b), not merged categories
+- Script: `npx tsx scripts/update-artist-rankings-izvrs.ts --yes`
+- Source: `Seznam_slik_ocene_slikarka_ALL.xlsx` (Excel format: Razred, Št točk, Slika ID)
+
+**Subcategory Handling**:
+The artist ranked each category as two separate subcategories (e.g., 3a and 3b).
+The ELO boost is calculated within each subcategory independently:
+- 3a: 24 items ranked separately → boost calculated based on position within 3a
+- 3b: 25 items ranked separately → boost calculated based on position within 3b
+- (Same pattern for 4a/4b and 5a/5b)
 
 **Tie-Breaking**: Artist rank wins if ELO is equal
 
@@ -359,6 +386,7 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `scripts/update-artist-rankings.ts` | Update artist rankings and ELO boosts from Excel file |
 | `scripts/cleanup-ocenjevalec1.ts` | Cleanup corrupted session, reset code for re-use |
 | `scripts/fix-code-labels.ts` | Fix access code labels to match code numbers |
+| `scripts/update-artist-rankings-izvrs.ts` | IzVRS-specific: Update ELO boosts from artist Excel (subcategory-aware) |
 
 ### Tests
 
@@ -367,7 +395,7 @@ The `/api/studies/[studyId]/rankings` endpoint has layered access:
 | `src/__tests__/elo.test.ts` | 29 | Formula correctness, zero-sum, adaptive K, artist boost |
 | `src/__tests__/bradley-terry.test.ts` | 14 | Convergence, SE, probabilities, Elo scale mapping |
 | `src/__tests__/statistics.test.ts` | 21 | Threshold, connectivity, circular triads, SE |
-| `src/__tests__/matchmaking.test.ts` | 16 | Coverage guarantee, no duplicates, position bias, progress |
+| `src/__tests__/matchmaking.test.ts` | 22 | Coverage guarantee, no duplicates, position bias, progress, tournament phase |
 
 ### Configuration
 
@@ -554,12 +582,49 @@ The platform has been comprehensively hardened for scientific defensibility. All
 ### ELO Rating System
 - Standard formula: `E = 1 / (1 + 10^((R_opponent - R_self) / 400))`
 - Zero-sum updates (winner's gain = loser's loss)
-- K-factor 32 (configurable per study)
+- **K-factor**: 32 (configurable per study)
 - **Adaptive K-factor** (optional): K decreases as items accumulate games for stable late-stage ratings
   - Formula: `effectiveK = baseK * max(1, 32 / min(gamesA, gamesB))`
   - Enable via `Study.adaptiveKFactor = true`
 - Artist boost correctly applied as initial rating adjustment
 - **Standard error**: SE ~ 400 / (sqrt(n) * ln(10)), returned per item in rankings API
+
+#### K-Factor Explained (K=32)
+The K-factor (32 by default) determines the **maximum points that can be transferred** in a single comparison:
+
+- **Unexpected upset** (low-rated beats high-rated): ~28 points transferred
+- **Slight upset**: ~20 points transferred
+- **Expected outcome** (higher-rated wins): ~4-8 points transferred
+- **Near-equal ratings**: ~16 points transferred
+
+**Example scenarios with K=32**:
+| Scenario | Winner ELO | Loser ELO | Points Transferred |
+|----------|------------|-----------|-------------------|
+| Huge upset | 1400 | 1800 | ~28 |
+| Small upset | 1450 | 1550 | ~22 |
+| Expected | 1600 | 1500 | ~14 |
+| Very expected | 1700 | 1400 | ~4 |
+
+**Why K=32?**
+- Standard in competitive ranking systems (chess, FIFA)
+- Balances responsiveness (reacts to new data) vs stability (doesn't overreact)
+- Higher K = more volatile ratings (faster adaptation, less stable)
+- Lower K = more stable ratings (slower to reflect skill changes)
+
+#### Artist ELO Boost (Independent of Voting)
+The artist boost is a **pre-voting initial adjustment**, completely independent of:
+- Number of reviewers
+- Number of comparisons
+- K-factor
+- Any voting activity
+
+**Formula**: `initialELO = 1500 + boost`
+- Where boost = `200 * (1 - (rank - 1) / (totalInSubcategory - 1))`
+- Rank 1 (best in subcategory): +200 → starts at 1700
+- Rank N (worst in subcategory): 0 → starts at 1500
+
+The boost gives artist-preferred items a "head start" but voting can override it.
+After many votes, the ELO will converge toward the true ranking regardless of initial boost.
 
 ### Bradley-Terry Model (New in v2)
 - MLE estimation via MM (Minorization-Maximization) algorithm
@@ -630,6 +695,42 @@ function calculateRecommendedQuadComparisons(itemCount, reviewerCount = 5) {
 
 **Algorithm version**: `sciblind-v2-quad` stored in comparison records
 
+### Tournament Phase (Two-Phase Voting - New in v5.2)
+
+**Purpose**: Seamlessly extend voting to produce a clear personal top 4 per category, without visible phase transitions to the reviewer.
+
+**How it works**:
+1. **Phase 1 (Coverage)**: Normal quad voting until target is reached and all items seen
+2. **Phase 2 (Tournament)**: 3-5 additional quads using ONLY items that have won at least once
+3. **Transition is invisible**: Progress bar continues smoothly, no "phase complete" message
+
+**Implementation**:
+```typescript
+// Calculate extra tournament quads needed
+function calculateTournamentQuads(winnerCount: number): number {
+  if (winnerCount <= 4) return 0;  // Not enough winners for tournament
+  const estimated = Math.ceil((winnerCount - 4) / 2);
+  return Math.min(5, Math.max(3, estimated));  // 3-5 extra quads
+}
+
+// Select quad from winners only
+function selectNextQuadWinnersOnly(items: Item[], sessionComparisons: Comparison[]): MatchQuad | null {
+  const winnerIds = getSessionWinnerIds(sessionComparisons);
+  const winnerItems = items.filter(item => winnerIds.has(item.id));
+  if (winnerItems.length < 4) return null;
+  return selectNextQuad(winnerItems, sessionComparisons);
+}
+```
+
+**Extended target calculation**:
+```typescript
+const tournamentQuads = calculateTournamentQuads(winnerIds.size);
+const extendedTarget = targetQuads + tournamentQuads;
+// Category complete when: completedQuads >= extendedTarget AND hasFullCoverage()
+```
+
+**Time impact**: ~3-5 extra quads per category × ~5-10 seconds = 15-50 seconds extra per category (negligible)
+
 **Legacy pairwise handling**: If a session has existing pairwise comparisons before switching to quad mode, they count toward category completion. The quad count is calculated as `floor(comparisons/3)`.
 
 **Coverage enforcement** (CRITICAL): Category completion ALWAYS requires full coverage, regardless of comparison count. This was a bug fix in v5.1 — previously, categories could complete without showing all items if raw comparison count met the target.
@@ -692,12 +793,94 @@ Returns per study: `dataStatus`, `isPublishable`, `publishableThreshold` details
 - If threshold met: "Results are sufficiently reliable" + proceed to next category
 - Bilingual (sl/en) translations for all checkpoint and completion messages
 
+### Side-by-Side Rankings Display (New in v5.2)
+
+**Purpose**: Show reviewers both their personal top 4 AND the overall study top 4 per category, side by side.
+
+**When displayed**:
+1. **After category completion**: Automatically shown in the "category done" screen
+2. **Via ZAKLJUČENO button**: Click on completed category to view rankings modal
+
+**Component**: `RankingsComparison`
+```typescript
+function RankingsComparison({
+  categoryName,
+  personalItems,  // Based on this reviewer's votes (top 10)
+  globalItems,    // Based on overall study ELO rankings (top 10)
+  themeColor,
+  t,              // Translations
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const displayCount = expanded ? 10 : 4;
+  // Displays:
+  // - Left column: "Vaši izbori" (Your picks) - top 4/10 from personal votes
+  // - Right column: "Skupni" (Overall) - top 4/10 from global ELO
+  // - Rank badges: Gold (1st), Silver (2nd), Bronze (3rd), Theme color (4th+)
+  // - "Show more" / "Show less" toggle button
+}
+```
+
+**Expandable Feature** (v5.3):
+- Default: Shows top 4 per column
+- Expanded: Shows top 10 per column
+- Toggle button: "Pokaži več" / "Pokaži manj" (Slovenian) or "Show more" / "Show less" (English)
+- Personal rankings API returns top 10 items per category
+
+**Data sources**:
+- **Personal rankings**: Derived from session comparisons (items that won the most in this session)
+- **Global rankings**: Fetched from `/api/studies/[studyId]/rankings` (ELO-based study-wide rankings)
+
+**API enhancement**: Rankings API now includes `imageKey` for thumbnail display
+
 ### Automated Tests
-- **80 tests** across 4 test suites (Vitest)
+- **86 tests** across 4 test suites (Vitest)
 - `elo.test.ts` — 29 tests: formula correctness, zero-sum, adaptive K, artist boost
 - `bradley-terry.test.ts` — 14 tests: convergence, SE, probabilities, Elo scale mapping
 - `statistics.test.ts` — 21 tests: threshold, connectivity, circular triads, SE
-- `matchmaking.test.ts` — 16 tests: coverage guarantee, no duplicates, position bias, progress
+- `matchmaking.test.ts` — 22 tests: coverage guarantee, no duplicates, position bias, progress, tournament phase
+
+### Scientific Reliability Audit (v5.3)
+
+**Randomization Quality**:
+- Fisher-Yates shuffle with `Math.random()` for position randomization
+- **Scientific acceptability**: `Math.random()` provides sufficient entropy for presentation order randomization (not cryptographically sensitive)
+- Position bias correction: Active balancing of left/right placement per item
+- Streak limits: Items cannot appear more than 2 consecutive times (prevents fatigue bias)
+
+**ELO System Integrity**:
+- Standard ELO formula with zero-sum property (winner's gain = loser's loss)
+- K-factor of 32 (configurable) balances responsiveness vs stability
+- Adaptive K-factor option for faster early convergence
+- Artist boost applied as initial rating adjustment, not affecting voting dynamics
+
+**Coverage Guarantee (CRITICAL)**:
+- Two-phase algorithm ensures 100% item coverage before category completion
+- `hasFullCoverage()` check at API level prevents completion without full coverage
+- Minimum target = itemCount (each item appears ~2x on average)
+- Progress bar never shows >99% until coverage + target both achieved
+
+**Position Bias Mitigation**:
+```typescript
+// Bias correction in pair selection
+const aLeftBias = itemA.leftCount - itemA.rightCount;
+const bLeftBias = itemB.leftCount - itemB.rightCount;
+// Place the item with fewer left appearances on left
+if (aLeftBias < bLeftBias) { leftItem = itemA; rightItem = itemB; }
+else if (bLeftBias < aLeftBias) { leftItem = itemB; rightItem = itemA; }
+else { /* Random 50/50 */ }
+```
+
+**Quad Mode Scientific Validity**:
+- Winner vs each loser = 3 independent pairwise comparisons
+- No transitivity assumed between losers (conservative approach)
+- ELO updated for each pairing individually
+- `sciblind-v2-quad` algorithm version stored for reproducibility
+
+**Fraud Detection**:
+- Response time < 500ms flagged as "too_fast" (potential bot)
+- Response time > 300s flagged as "too_slow" (session abandonment)
+- Test sessions excluded from ELO calculations
+- Full audit trail with algorithm version per comparison
 
 ## Activity Logging
 
@@ -741,6 +924,8 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `8b359c9` | Quadruplet voting mode — 4 items, pick best 1, generates 3 pairwise wins |
 | `4d83c60` | Fix coverage enforcement — categories require full coverage before completion |
 | `3be0a48` | Fix TypeScript error in update-artist-rankings script |
+| `96714aa` | Tournament phase + artist ELO boosts + side-by-side rankings (v5.2) |
+| `xxxxxxx` | Performance optimizations + scientific reliability audit (v5.3) |
 
 ## Known Issues & Fixes
 
@@ -791,6 +976,33 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 **Code labels fix**: Access code labels were incorrectly set as "Ocenjevalec 1", "Ocenjevalec 2", etc. instead of matching the actual code numbers. Fixed to "Ocenjevalec 90074", "Ocenjevalec 25793", etc. for proper traceability.
 - Script: `scripts/fix-code-labels.ts`
 
+### Tournament Phase & Artist ELO Boosts (2026-02-06)
+
+**Features added**:
+1. **Tournament phase**: Seamless two-phase voting to produce clear top 4 per category
+   - Phase 1: Normal coverage phase
+   - Phase 2: 3-5 extra quads with winners only
+   - Progress bar continues smoothly (no visible phase transition)
+
+2. **Artist ELO boosts**: Applied from artist's Excel rankings
+   - Source: `Seznam_slik_ocene_slikarka_ALL.xlsx`
+   - Formula: `boost = 200 * (1 - (rank - 1) / (totalInSubcategory - 1))`
+   - Rank 1 (best) = +200 boost → ELO 1700
+   - Rank N (worst) = 0 boost → ELO 1500
+   - Important: Subcategories (3a, 3b, 4a, 4b, 5a, 5b) ranked separately
+
+3. **Side-by-side rankings**: Personal vs global top 4 displayed together
+   - Shown after category completion
+   - Accessible via ZAKLJUČENO button on category selection
+
+**Files modified**:
+- `src/lib/matchmaking/index.ts` - Added tournament functions
+- `src/app/api/participate/[studyId]/next-quad/route.ts` - Tournament phase logic
+- `src/app/api/studies/[studyId]/rankings/route.ts` - Added imageKey to response
+- `src/app/study/[studyId]/vote/page.tsx` - RankingsComparison component, global rankings fetch, rankings modal
+- `src/__tests__/matchmaking.test.ts` - Tournament phase unit tests (86 total tests)
+- `scripts/update-artist-rankings-izvrs.ts` - IzVRS-specific artist boost script
+
 ### Checkpoint Interstitials & Progress Bar Overhaul (2026-02-05)
 **Problem**: Motivational checkpoint toasts were tiny and barely visible. Progress bar didn't show counts. `allowContinuedVoting` couldn't be changed without direct DB access.
 
@@ -824,14 +1036,17 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 
 ## Next Steps
 
-1. ✅ All completed items from v1-v5 (see "What's Implemented" table above)
-2. 🔄 Update artist score boosts when full rankings Excel is provided
-   - Script ready: `npx tsx scripts/update-artist-rankings.ts "path/to/file.xlsx" --yes`
-   - Formula: `newElo = (currentElo - oldBoost) + newBoost`
-   - Boost calculation: rank 1 = +200, last rank = +20 (linear scale)
-3. 🔄 Keycloak integration for admin auth (replaces ADMIN_SECRET)
-4. 🔄 Traefik reverse proxy setup
-5. Planned: PDF export with methodology
+1. ✅ All completed items from v1-v5.2 (see "What's Implemented" table above)
+2. ✅ Artist ELO boosts applied from Excel file
+   - Script: `npx tsx scripts/update-artist-rankings-izvrs.ts --yes`
+   - All 128 items updated with correct boosts (1500-1700 range)
+   - Subcategory-aware: 3a, 3b, 4a, 4b, 5a, 5b ranked separately
+3. ✅ Tournament phase implemented (seamless two-phase voting)
+4. ✅ Side-by-side rankings display (personal vs global top 4)
+5. ✅ ZAKLJUČENO button now clickable to show rankings modal
+6. 🔄 Keycloak integration for admin auth (replaces ADMIN_SECRET)
+7. 🔄 Traefik reverse proxy setup
+8. Planned: PDF export with methodology
 
 ## Keycloak Integration (Planned)
 

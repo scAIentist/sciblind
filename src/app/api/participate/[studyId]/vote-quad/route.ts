@@ -97,8 +97,8 @@ export async function POST(
       );
     }
 
-    // Get session and items
-    const [session, ...items] = await Promise.all([
+    // Get session and items - OPTIMIZED: Single query for all items instead of 4 separate queries
+    const [session, itemsResult] = await Promise.all([
       prisma.session.findUnique({
         where: { token: sessionToken },
         include: {
@@ -112,8 +112,13 @@ export async function POST(
           },
         },
       }),
-      ...itemIds.map((id) => prisma.item.findUnique({ where: { id } })),
+      prisma.item.findMany({
+        where: { id: { in: itemIds } },
+      }),
     ]);
+
+    // Reorder items to match itemIds order for consistency
+    const items = itemIds.map((id) => itemsResult.find((item) => item.id === id));
 
     if (!session || session.studyId !== studyId) {
       return NextResponse.json(
