@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-06 (v5.3 — Performance Optimizations + Scientific Audit)
+> Last Updated: 2026-02-06 (v5.4 — allowContinuedVoting Fix + API Alignment)
 
 ## Project Overview
 
@@ -925,7 +925,8 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `4d83c60` | Fix coverage enforcement — categories require full coverage before completion |
 | `3be0a48` | Fix TypeScript error in update-artist-rankings script |
 | `96714aa` | Tournament phase + artist ELO boosts + side-by-side rankings (v5.2) |
-| `xxxxxxx` | Performance optimizations + scientific reliability audit (v5.3) |
+| `0da329f` | Performance optimizations + scientific reliability audit (v5.3) |
+| `3c8cb34` | Fix allowContinuedVoting enforcement + align pair/quad APIs (v5.4) |
 
 ## Known Issues & Fixes
 
@@ -1033,6 +1034,33 @@ Migrated all images from PNG to compressed WebP format for faster loading:
 - `ThumbnailGrid` shows skeleton shimmer until ALL images loaded, then fades in
 - Removed unused state/refs, moved image helpers outside React component
 - Net reduction: -117 lines (304 removed, 187 added)
+
+### allowContinuedVoting Enforcement Fix (2026-02-06)
+**BUG**: The `allowContinuedVoting=false` setting was NOT enforced in next-quad API. Voting could continue indefinitely even when the study was configured to stop at the target.
+
+**Root cause**: The next-quad API only checked coverage + target for completion, completely ignoring the `allowContinuedVoting` study setting.
+
+**FIX** (commit `3c8cb34`):
+1. **Category selection view**: `isComplete` now respects `allowContinuedVoting`
+2. **Category done check**: `categoryDone` condition updated
+3. **All categories complete check**: Per-category completion logic fixed
+
+**Code change**:
+```typescript
+// BEFORE (bug): Always required coverage
+const categoryDone = completedQuads >= fullTarget && coverageAchieved;
+
+// AFTER (fixed): Respects allowContinuedVoting setting
+const categoryDone = study.allowContinuedVoting
+  ? (completedQuads >= fullTarget && coverageAchieved)  // Need both
+  : (completedQuads >= fullTarget);  // Just target is enough
+```
+
+**API alignment** (next-quad now matches next-pair):
+- Added `isPublishableThreshold` check for category completion
+- Returns `thresholdMet`, `dataStatus`, `allowContinuedVoting` in response
+- Added activity logging for `SESSION_COMPLETED` and `CATEGORY_COMPLETED`
+- Session query now selects `minExposuresPerItem`, `minTotalComparisons`
 
 ## Next Steps
 
