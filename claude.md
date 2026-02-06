@@ -1,6 +1,6 @@
 # SciBLIND - Claude Context Document
 
-> Last Updated: 2026-02-06 (v5.4 — allowContinuedVoting Fix + API Alignment)
+> Last Updated: 2026-02-06 (v5.5 — Matchmaking Duplicate Quads Fix + Performance Optimizations)
 
 ## Project Overview
 
@@ -820,11 +820,11 @@ function RankingsComparison({
 }
 ```
 
-**Expandable Feature** (v5.3):
-- Default: Shows top 4 per column
-- Expanded: Shows top 10 per column
-- Toggle button: "Pokaži več" / "Pokaži manj" (Slovenian) or "Show more" / "Show less" (English)
-- Personal rankings API returns top 10 items per category
+**Simplified Display** (v5.5):
+- Always shows top 4 per column (no expansion)
+- Labels updated: "Vaši izbori" (Your picks), "Skupni rezultati" (Overall results)
+- ZAKLJUČENO button fixed: No longer shows duplicate text when checkmark already visible
+- Safe area padding added for notched devices (iOS/Android)
 
 **Data sources**:
 - **Personal rankings**: Derived from session comparisons (items that won the most in this session)
@@ -927,6 +927,7 @@ await logActivitySync('AUTH_FAILURE', { studyId, ipHash, detail: 'Invalid code' 
 | `96714aa` | Tournament phase + artist ELO boosts + side-by-side rankings (v5.2) |
 | `0da329f` | Performance optimizations + scientific reliability audit (v5.3) |
 | `3c8cb34` | Fix allowContinuedVoting enforcement + align pair/quad APIs (v5.4) |
+| `pending` | Fix matchmaking duplicate quads + performance optimizations + UI fixes (v5.5) |
 
 ## Known Issues & Fixes
 
@@ -1061,6 +1062,46 @@ const categoryDone = study.allowContinuedVoting
 - Returns `thresholdMet`, `dataStatus`, `allowContinuedVoting` in response
 - Added activity logging for `SESSION_COMPLETED` and `CATEGORY_COMPLETED`
 - Session query now selects `minExposuresPerItem`, `minTotalComparisons`
+
+### Matchmaking Duplicate Quads Fix (2026-02-06)
+**BUG**: The first and second quads would show the same 4 images in different positions. This was a critical bug that made early voting essentially worthless.
+
+**Root cause**: Architectural mismatch between pairwise and quad voting. The original `selectNextQuad()` only tracked individual item appearances, NOT which combinations of 4 had been shown together. When `sessionComparisons` was empty, all items had identical scores, causing deterministic selection of the same 4 items every time.
+
+**FIX**:
+1. **Quad combination tracking**: New `getQuadItemIds()` function reconstructs which quad combinations were shown by grouping comparisons in threes
+2. **Duplicate detection**: New `isQuadAlreadyShown()` checks if candidate quad matches any previously shown combination
+3. **Random tiebreaker**: Added `Math.random() * 0.001` to break ties when items have equal scores
+4. **Retry logic**: If selected quad was already shown, shuffle and retry (up to 10 attempts)
+
+**Code added** to `src/lib/matchmaking/index.ts`:
+```typescript
+// Reconstruct shown quad combinations from comparison records
+function getQuadItemIds(sessionComparisons: Comparison[]): Set<string>[] {
+  const quads: Set<string>[] = [];
+  for (let i = 0; i < sessionComparisons.length; i += 3) {
+    const quadItems = new Set<string>();
+    for (let j = 0; j < 3 && i + j < sessionComparisons.length; j++) {
+      const comp = sessionComparisons[i + j];
+      quadItems.add(comp.itemAId);
+      quadItems.add(comp.itemBId);
+    }
+    if (quadItems.size === 4) quads.push(quadItems);
+  }
+  return quads;
+}
+
+// Check if candidate quad matches any shown quad
+function isQuadAlreadyShown(candidate: Set<string>, shownQuads: Set<string>[]): boolean {
+  return shownQuads.some(shown =>
+    shown.size === candidate.size && [...candidate].every(id => shown.has(id))
+  );
+}
+```
+
+**Performance impact**: Negligible. `getQuadItemIds()` is O(n) where n is comparisons count (~30-50 per session). `isQuadAlreadyShown()` is O(k) where k is shown quads (~10-15 per category).
+
+**Session cleanup**: Ocenjevalec 90074's corrupted session (138 comparisons) was deleted and the access code reset for re-use.
 
 ## Next Steps
 

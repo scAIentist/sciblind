@@ -465,6 +465,51 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 /**
+ * Get all 4 item IDs that participated in a quad (winner + 3 losers).
+ * Quad comparisons create 3 records: winner vs each loser.
+ * To find all 4 items, we group by winner (itemAId) and collect all losers (itemBId).
+ */
+function getQuadItemIds(sessionComparisons: Comparison[]): Set<string>[] {
+  // Group comparisons by winner (itemAId) to reconstruct quads
+  // A quad vote creates: (winner, loser1), (winner, loser2), (winner, loser3)
+  const quads: Set<string>[] = [];
+
+  // Process in groups of 3 (each quad creates 3 comparison records)
+  for (let i = 0; i < sessionComparisons.length; i += 3) {
+    const quadItems = new Set<string>();
+    for (let j = 0; j < 3 && i + j < sessionComparisons.length; j++) {
+      const comp = sessionComparisons[i + j];
+      quadItems.add(comp.itemAId);
+      quadItems.add(comp.itemBId);
+    }
+    if (quadItems.size === 4) {
+      quads.push(quadItems);
+    }
+  }
+
+  return quads;
+}
+
+/**
+ * Check if a set of 4 item IDs matches a previously shown quad.
+ */
+function isQuadAlreadyShown(itemIds: Set<string>, shownQuads: Set<string>[]): boolean {
+  for (const shown of shownQuads) {
+    if (shown.size === itemIds.size) {
+      let allMatch = true;
+      for (const id of itemIds) {
+        if (!shown.has(id)) {
+          allMatch = false;
+          break;
+        }
+      }
+      if (allMatch) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Select next quadruplet (4 items) for comparison
  *
  * The winner of a quadruplet comparison beats all 3 losers, generating 3 pairwise wins.
@@ -473,8 +518,9 @@ function shuffleArray<T>(array: T[]): T[] {
  * Algorithm goals:
  * 1. **COVERAGE**: Prioritize unseen items to ensure every item appears at least once
  * 2. **FAIRNESS**: Balance comparison counts across items
- * 3. **VARIETY**: Avoid showing same items repeatedly
+ * 3. **VARIETY**: Avoid showing same items repeatedly, NEVER repeat exact quad combinations
  * 4. **INFORMATION**: Prefer items with similar ELO for more informative comparisons
+ * 5. **RANDOMIZATION**: Add random tiebreaker to prevent deterministic selection
  *
  * @param items - All items in the category
  * @param sessionComparisons - Comparisons already made in this session
@@ -488,84 +534,128 @@ export function selectNextQuad(
     return null;
   }
 
-  // Get items seen in this session
-  const seen = getSeenItemIds(sessionComparisons);
+  // Track which quad combinations have already been shown
+  const shownQuads = getQuadItemIds(sessionComparisons);
+
+  // Get items seen in this session (all 4 items from each quad)
+  const seen = new Set<string>();
+  for (const quad of shownQuads) {
+    for (const id of quad) {
+      seen.add(id);
+    }
+  }
+  // Also add from comparisons directly (for legacy pairwise data)
+  for (const comp of sessionComparisons) {
+    seen.add(comp.itemAId);
+    seen.add(comp.itemBId);
+  }
+
   const unseenItems = items.filter((item) => !seen.has(item.id));
 
-  // Count session appearances
+  // Count session appearances - count all 4 items per quad, not just pairs
   const sessionCounts = new Map<string, number>();
   for (const item of items) {
     sessionCounts.set(item.id, 0);
   }
-  for (const comp of sessionComparisons) {
-    sessionCounts.set(comp.itemAId, (sessionCounts.get(comp.itemAId) || 0) + 1);
-    sessionCounts.set(comp.itemBId, (sessionCounts.get(comp.itemBId) || 0) + 1);
+  for (const quad of shownQuads) {
+    for (const id of quad) {
+      sessionCounts.set(id, (sessionCounts.get(id) || 0) + 1);
+    }
   }
 
-  // Track recently shown items (last 2 comparisons)
+  // Track items from the LAST quad (most recent 3 comparisons = 1 quad)
   const recentlyShown = new Set<string>();
-  const recentWindow = Math.min(2, sessionComparisons.length);
-  for (let i = 0; i < recentWindow; i++) {
-    const comp = sessionComparisons[sessionComparisons.length - 1 - i];
-    if (comp) {
-      recentlyShown.add(comp.itemAId);
-      recentlyShown.add(comp.itemBId);
+  if (shownQuads.length > 0) {
+    const lastQuad = shownQuads[shownQuads.length - 1];
+    for (const id of lastQuad) {
+      recentlyShown.add(id);
     }
+  }
+
+  // Generate a random tiebreaker for each item (prevents deterministic selection)
+  const randomTiebreaker = new Map<string, number>();
+  for (const item of items) {
+    randomTiebreaker.set(item.id, Math.random() * 10);
   }
 
   // Score function for item selection (lower = better)
   const scoreItem = (item: Item): number => {
     let score = 0;
-    // Prioritize unseen items
+    // Prioritize unseen items (CRITICAL for coverage)
     if (!seen.has(item.id)) score -= 1000;
     // Prefer items with fewer global comparisons
     score += item.comparisonCount * 5;
     // Prefer items with fewer session appearances
-    score += (sessionCounts.get(item.id) || 0) * 20;
-    // Penalize recently shown items
-    if (recentlyShown.has(item.id)) score += 100;
+    score += (sessionCounts.get(item.id) || 0) * 50; // Increased weight
+    // Penalize recently shown items (items from last quad)
+    if (recentlyShown.has(item.id)) score += 200; // Increased penalty
+    // Random tiebreaker to prevent same selection when scores are equal
+    score += randomTiebreaker.get(item.id) || 0;
     return score;
   };
 
   // Sort items by score (best first)
   const sortedItems = [...items].sort((a, b) => scoreItem(a) - scoreItem(b));
 
-  // Select top 4, but ensure variety by not picking all from same ELO band
-  const selected: Item[] = [];
-  const usedIds = new Set<string>();
+  // Try to select 4 items that haven't been shown together before
+  const maxAttempts = 20; // Prevent infinite loop
 
-  // First pass: take top candidates
-  for (const item of sortedItems) {
-    if (selected.length >= 4) break;
-    if (usedIds.has(item.id)) continue;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const selected: Item[] = [];
+    const usedIds = new Set<string>();
 
-    // Check ELO diversity - avoid 4 items with nearly identical ELO
-    if (selected.length === 3) {
-      const avgElo = selected.reduce((sum, i) => sum + i.eloRating, 0) / 3;
-      const eloDiff = Math.abs(item.eloRating - avgElo);
-      // If too similar, try to find a more diverse option
-      if (eloDiff < 50 && sortedItems.indexOf(item) < sortedItems.length - 1) {
-        const remaining = sortedItems.slice(sortedItems.indexOf(item) + 1);
-        const diverse = remaining.find((i) =>
-          !usedIds.has(i.id) && Math.abs(i.eloRating - avgElo) >= 50
-        );
-        if (diverse) {
-          selected.push(diverse);
-          usedIds.add(diverse.id);
-          continue;
+    // Shuffle the candidates slightly for variety on retry attempts
+    const candidates = attempt === 0
+      ? sortedItems
+      : shuffleArray([...sortedItems].slice(0, Math.min(12, sortedItems.length))).concat(sortedItems.slice(12));
+
+    for (const item of candidates) {
+      if (selected.length >= 4) break;
+      if (usedIds.has(item.id)) continue;
+
+      // On first attempt, try ELO diversity
+      if (attempt === 0 && selected.length === 3) {
+        const avgElo = selected.reduce((sum, i) => sum + i.eloRating, 0) / 3;
+        const eloDiff = Math.abs(item.eloRating - avgElo);
+        if (eloDiff < 50) {
+          const remaining = candidates.slice(candidates.indexOf(item) + 1);
+          const diverse = remaining.find((i) =>
+            !usedIds.has(i.id) && Math.abs(i.eloRating - avgElo) >= 50
+          );
+          if (diverse) {
+            selected.push(diverse);
+            usedIds.add(diverse.id);
+            continue;
+          }
         }
       }
+
+      selected.push(item);
+      usedIds.add(item.id);
     }
 
-    selected.push(item);
-    usedIds.add(item.id);
+    if (selected.length < 4) {
+      continue; // Try again
+    }
+
+    // Check if this exact quad combination was already shown
+    const selectedSet = new Set(selected.map(i => i.id));
+    if (!isQuadAlreadyShown(selectedSet, shownQuads)) {
+      // Found a new combination!
+      const positions = shuffleArray(selected.map((item) => item.id));
+      return {
+        items: selected,
+        positions,
+      };
+    }
+
+    // This combination was already shown, try again with more randomization
   }
 
-  if (selected.length < 4) {
-    return null;
-  }
-
-  // Randomize display positions to avoid any position bias
+  // Fallback: If we couldn't find a new combination after maxAttempts,
+  // just pick random 4 items (shouldn't happen in practice)
+  const shuffled = shuffleArray([...items]);
+  const selected = shuffled.slice(0, 4);
   const positions = shuffleArray(selected.map((item) => item.id));
 
   return {
@@ -649,8 +739,8 @@ export function calculateTournamentQuads(winnerCount: number): number {
  * Select next quadruplet from WINNERS ONLY (items that won at least once).
  * Used in tournament phase after coverage is complete.
  *
- * OPTIMIZED: Uses simplified scoring since all candidates are already winners.
- * Focuses on win count sorting rather than complex coverage logic.
+ * IMPROVED: Prevents duplicate quad combinations, adds randomization.
+ * Focuses on win count sorting with variety guarantees.
  *
  * Returns null if fewer than 4 winners exist (need more coverage voting).
  *
@@ -670,7 +760,10 @@ export function selectNextQuadWinnersOnly(
     return null;
   }
 
-  // FAST PATH: Count wins per item for quick sorting
+  // Track which quad combinations have already been shown
+  const shownQuads = getQuadItemIds(sessionComparisons);
+
+  // Count wins per item for sorting
   const winCounts = new Map<string, number>();
   for (const comp of sessionComparisons) {
     if (comp.winnerId) {
@@ -678,40 +771,70 @@ export function selectNextQuadWinnersOnly(
     }
   }
 
-  // Track items shown in the last comparison for variety
+  // Track items from the LAST quad (most recent 3 comparisons = 1 quad)
   const recentlyShown = new Set<string>();
-  if (sessionComparisons.length > 0) {
-    const lastComp = sessionComparisons[sessionComparisons.length - 1];
-    recentlyShown.add(lastComp.itemAId);
-    recentlyShown.add(lastComp.itemBId);
+  if (shownQuads.length > 0) {
+    const lastQuad = shownQuads[shownQuads.length - 1];
+    for (const id of lastQuad) {
+      recentlyShown.add(id);
+    }
   }
 
-  // Simple score: prioritize top winners, but add variety
+  // Generate a random tiebreaker for variety
+  const randomTiebreaker = new Map<string, number>();
+  for (const item of winnerItems) {
+    randomTiebreaker.set(item.id, Math.random() * 5);
+  }
+
+  // Score: prioritize top winners, penalize recently shown, add randomness
   const sortedWinners = [...winnerItems].sort((a, b) => {
     const aWins = winCounts.get(a.id) || 0;
     const bWins = winCounts.get(b.id) || 0;
-    // Top winners first, but penalize recently shown
-    const aScore = aWins * 10 - (recentlyShown.has(a.id) ? 5 : 0);
-    const bScore = bWins * 10 - (recentlyShown.has(b.id) ? 5 : 0);
+    const aScore = aWins * 10 - (recentlyShown.has(a.id) ? 15 : 0) + (randomTiebreaker.get(a.id) || 0);
+    const bScore = bWins * 10 - (recentlyShown.has(b.id) ? 15 : 0) + (randomTiebreaker.get(b.id) || 0);
     return bScore - aScore; // Higher score = more wins = better
   });
 
-  // Select top 4 winners (with slight ELO diversity)
-  const selected: Item[] = [];
-  for (const item of sortedWinners) {
-    if (selected.length >= 4) break;
-    selected.push(item);
+  // Try to find a quad combination that hasn't been shown
+  const maxAttempts = 10;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidates = attempt === 0
+      ? sortedWinners
+      : shuffleArray([...sortedWinners]);
+
+    const selected: Item[] = [];
+    for (const item of candidates) {
+      if (selected.length >= 4) break;
+      selected.push(item);
+    }
+
+    if (selected.length < 4) {
+      continue; // Not enough winners yet
+    }
+
+    // Check if this exact quad combination was already shown
+    const selectedSet = new Set(selected.map(i => i.id));
+    if (!isQuadAlreadyShown(selectedSet, shownQuads)) {
+      // Found a new combination!
+      const positions = shuffleArray(selected.map((item) => item.id));
+      return {
+        items: selected,
+        positions,
+      };
+    }
   }
 
-  if (selected.length < 4) {
-    return null;
+  // Fallback: if all combinations tried, just return the top 4 shuffled
+  if (winnerItems.length >= 4) {
+    const shuffled = shuffleArray([...winnerItems]);
+    const selected = shuffled.slice(0, 4);
+    const positions = shuffleArray(selected.map((item) => item.id));
+    return {
+      items: selected,
+      positions,
+    };
   }
 
-  // Randomize display positions
-  const positions = shuffleArray(selected.map((item) => item.id));
-
-  return {
-    items: selected,
-    positions,
-  };
+  return null;
 }

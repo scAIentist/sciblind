@@ -126,10 +126,8 @@ const translations = {
     tapBestImage: 'Pritisnite na sliko, ki se vam zdi najboljša',
     // Side-by-side rankings
     yourPicks: 'Vaši izbori',
-    overall: 'Skupni',
+    overall: 'Skupni rezultati',
     viewRankings: 'Poglej rezultate',
-    showMore: 'Pokaži več',
-    showLess: 'Pokaži manj',
   },
   en: {
     selectImage: 'Select the image you prefer.',
@@ -177,10 +175,8 @@ const translations = {
     tapBestImage: 'Tap the image you think is best',
     // Side-by-side rankings
     yourPicks: 'Your picks',
-    overall: 'Overall',
+    overall: 'Overall results',
     viewRankings: 'View rankings',
-    showMore: 'Show more',
-    showLess: 'Show less',
   },
 };
 
@@ -442,27 +438,28 @@ function RankingsComparison({
   themeColor: string;
   t: typeof translations.sl;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const displayCount = expanded ? 10 : 4;
-  const canExpand = personalItems.length > 4 || globalItems.length > 4;
+  // Always show exactly top 4
+  const displayCount = 4;
 
   const RankBadge = ({ rank }: { rank: number }) => (
     <div
-      className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg"
+      className="absolute -top-1 -left-1 w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-lg z-10"
       style={{ backgroundColor: rank === 1 ? '#F59E0B' : rank === 2 ? '#94A3B8' : rank === 3 ? '#CD7F32' : themeColor }}
     >
       {rank}
     </div>
   );
 
-  const ItemGrid = ({ items, label }: { items: typeof personalItems; label: string }) => {
+  const ItemGrid = ({ items, label, sublabel }: { items: typeof personalItems; label: string; sublabel: string }) => {
     const displayItems = items.slice(0, displayCount);
-    const gridCols = expanded ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2';
 
     return (
-      <div className="flex-1">
-        <h4 className="text-xs text-slate-400 mb-2 uppercase tracking-wide text-center">{label}</h4>
-        <div className={`grid ${gridCols} gap-1.5`}>
+      <div className="flex-1 min-w-0">
+        <div className="text-center mb-2">
+          <h4 className="text-sm font-semibold text-white">{label}</h4>
+          <p className="text-xs text-slate-400">{sublabel}</p>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
           {displayItems.map((item, idx) => (
             <div key={item.id} className="relative">
               <div className="aspect-square rounded-lg overflow-hidden bg-slate-700">
@@ -470,15 +467,15 @@ function RankingsComparison({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={item.imageUrl} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-500">#{idx + 1}</div>
+                  <div className="w-full h-full flex items-center justify-center text-slate-500 text-lg font-bold">#{idx + 1}</div>
                 )}
               </div>
               <RankBadge rank={idx + 1} />
             </div>
           ))}
-          {/* Empty slots to fill grid */}
-          {!expanded && displayItems.length < 4 && Array.from({ length: 4 - displayItems.length }).map((_, i) => (
-            <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/50" />
+          {/* Empty slots to fill grid if less than 4 items */}
+          {displayItems.length < 4 && Array.from({ length: 4 - displayItems.length }).map((_, i) => (
+            <div key={`empty-${i}`} className="aspect-square rounded-lg bg-slate-700/30 border border-dashed border-slate-600" />
           ))}
         </div>
       </div>
@@ -488,23 +485,21 @@ function RankingsComparison({
   return (
     <div className="bg-slate-800/50 rounded-xl p-4">
       {categoryName && (
-        <h3 className="font-medium text-white text-sm mb-3 text-center">{categoryName}</h3>
+        <h3 className="font-medium text-white text-base mb-4 text-center">{categoryName}</h3>
       )}
-      <div className={`flex gap-4 ${expanded ? 'flex-col' : ''}`}>
-        <ItemGrid items={personalItems} label={t.yourPicks} />
-        {!expanded && <div className="w-px bg-slate-700" />} {/* Divider only when side-by-side */}
-        {expanded && <div className="h-px bg-slate-700 my-2" />} {/* Horizontal divider when stacked */}
-        <ItemGrid items={globalItems} label={t.overall} />
+      <div className="flex gap-4 items-start">
+        <ItemGrid
+          items={personalItems}
+          label={t.yourPicks}
+          sublabel="Top 4"
+        />
+        <div className="w-px bg-slate-600 self-stretch flex-shrink-0" />
+        <ItemGrid
+          items={globalItems}
+          label={t.overall}
+          sublabel="Top 4"
+        />
       </div>
-      {canExpand && (
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="w-full mt-3 py-2 text-sm text-slate-400 hover:text-white transition-colors flex items-center justify-center gap-1"
-        >
-          {expanded ? t.showLess : t.showMore}
-          <ChevronRight className={`w-4 h-4 transition-transform ${expanded ? 'rotate-90' : ''}`} />
-        </button>
-      )}
     </div>
   );
 }
@@ -1172,15 +1167,17 @@ function VotingPageContent() {
   // ========== COMPLETE ==========
   if (viewState === 'complete') {
     return (
-      <div className="min-h-[100dvh] bg-slate-900 p-6 relative overflow-hidden">
+      <div className="min-h-screen min-h-[100dvh] bg-slate-900 relative overflow-auto">
         <ConfettiCelebration themeColor={uiConfig.themeColor} />
-        <div className="max-w-2xl mx-auto relative z-10 animate-fade-in">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
-              <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
-            </div>
-            <h1 className="text-3xl font-bold text-white mb-3">{t.thankYou}</h1>
+        {/* Safe area padding for all browsers */}
+        <div className="px-4 py-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))] relative z-10">
+          <div className="max-w-2xl mx-auto animate-fade-in">
+            {/* Header */}
+            <div className="text-center mb-8">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
+                <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+              </div>
+              <h1 className="text-3xl font-bold text-white mb-3">{t.thankYou}</h1>
             <p className="text-slate-400">{t.allComplete}</p>
           </div>
 
@@ -1224,6 +1221,7 @@ function VotingPageContent() {
               <img src={displayLogoUrl} alt="Logo" className="h-10 w-auto object-contain mx-auto opacity-50" />
             )}
           </div>
+          </div>
         </div>
       </div>
     );
@@ -1248,8 +1246,9 @@ function VotingPageContent() {
     const hasThumbnails = Object.keys(categoryThumbnails).length > 0;
 
     return (
-      <div className="min-h-[100dvh] bg-slate-900 p-4 pb-8 safe-area-inset">
-        <div className="max-w-lg mx-auto">
+      <div className="min-h-screen min-h-[100dvh] bg-slate-900 overflow-auto">
+        <div className="px-4 py-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
+          <div className="max-w-lg mx-auto">
           {displayLogoUrl && (
             <div className="pt-4 pb-2 text-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1314,7 +1313,7 @@ function VotingPageContent() {
                       }}
                       className="w-full mt-1 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg font-semibold text-sm uppercase tracking-wide transition-all flex items-center justify-center gap-2"
                     >
-                      {t.completed}: {t.viewRankings}
+                      {t.viewRankings}
                       <ChevronRight className="w-4 h-4" />
                     </button>
                   ) : (
@@ -1376,6 +1375,7 @@ function VotingPageContent() {
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   }
@@ -1388,22 +1388,24 @@ function VotingPageContent() {
     const categoryName = categories.find(c => c.id === categoryDoneInfo.categoryId)?.name || '';
 
     return (
-      <div className="min-h-[100dvh] bg-slate-900 p-6 overflow-auto">
-        <div className="max-w-lg mx-auto animate-fade-in">
-          {/* Logo */}
-          {displayLogoUrl && (
-            <div className="text-center mb-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={displayLogoUrl} alt="Logo" className="h-12 w-auto object-contain mx-auto opacity-90" />
-            </div>
-          )}
+      <div className="min-h-screen min-h-[100dvh] bg-slate-900 overflow-auto">
+        {/* Safe area padding for all browsers */}
+        <div className="px-4 py-6 pt-[max(1.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+          <div className="max-w-lg mx-auto animate-fade-in">
+            {/* Logo */}
+            {displayLogoUrl && (
+              <div className="text-center mb-4">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={displayLogoUrl} alt="Logo" className="h-12 w-auto object-contain mx-auto opacity-90" />
+              </div>
+            )}
 
-          {/* Header */}
-          <div className="text-center mb-6">
-            <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
-              <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
-            </div>
-            <h2 className="text-2xl font-bold text-white mb-2">{t.categoryComplete}</h2>
+            {/* Header */}
+            <div className="text-center mb-6">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4 animate-check-scale-in" style={{ backgroundColor: `${uiConfig.themeColor}20` }}>
+                <Check className="w-10 h-10" style={{ color: uiConfig.themeColor }} strokeWidth={2.5} />
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">{t.categoryComplete}</h2>
             {categoryName && <p className="text-lg text-slate-300 font-medium">{categoryName}</p>}
             <p className="text-sm text-slate-400 mt-2 leading-relaxed">
               {categoryDoneInfo.thresholdMet ? t.thresholdSufficient : t.thresholdInsufficient}
@@ -1466,6 +1468,7 @@ function VotingPageContent() {
             >
               {t.nextCategory}
             </button>
+          </div>
           </div>
         </div>
       </div>
