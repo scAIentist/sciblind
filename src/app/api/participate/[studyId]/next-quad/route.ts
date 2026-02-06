@@ -116,13 +116,13 @@ export async function GET(
         const quadCount = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawCount / 2)) : perfectQuads;
         const catCoverage = hasFullCoverage(catItems as any, catComparisons as any);
 
-        // Tournament phase: FIXED 4 extra quads once coverage is achieved
-        const coveragePhaseComplete = quadCount >= catBaseTarget && catCoverage;
-        const tournamentQuads = coveragePhaseComplete ? 4 : 0;
-        const extendedTarget = catBaseTarget + tournamentQuads;
+        // Tournament phase: ALWAYS show full target (baseTarget + 4 tournament quads)
+        // This prevents progress bar from jumping when tournament phase starts
+        const TOURNAMENT_QUADS = 4;
+        const fullTarget = catBaseTarget + TOURNAMENT_QUADS;
 
-        // ALWAYS require coverage AND extended target for completion
-        const isComplete = quadCount >= extendedTarget && catCoverage;
+        // ALWAYS require coverage AND full target for completion
+        const isComplete = quadCount >= fullTarget && catCoverage;
 
         return {
           id: cat.id,
@@ -131,8 +131,8 @@ export async function GET(
           displayOrder: cat.displayOrder,
           itemCount: catItems.length,
           completed: quadCount,
-          target: extendedTarget,
-          percentage: Math.min(100, Math.round((quadCount / extendedTarget) * 100)),
+          target: fullTarget,
+          percentage: Math.min(100, Math.round((quadCount / fullTarget) * 100)),
           isComplete,
         };
       });
@@ -184,19 +184,18 @@ export async function GET(
     const completedQuads = isPairwiseHeavy ? Math.max(perfectQuads, Math.ceil(rawComparisons / 2)) : perfectQuads;
     const coverageAchieved = hasFullCoverage(items, sessionComparisons as any);
 
-    // Tournament phase: Calculate extended target for winner refinement
-    // FIXED: Use a stable tournament quota (always 4 extra quads) to avoid progress bar jumping
-    // This prevents the target from changing as more winners accumulate during tournament
+    // Tournament phase: ALWAYS show full target from the start (baseTarget + 4)
+    // This prevents progress bar from jumping when tournament phase starts
+    const TOURNAMENT_QUADS = 4;
+    const fullTarget = baseTarget + TOURNAMENT_QUADS;
+
+    // Determine phase - coverage phase complete when baseTarget AND coverage achieved
     const coveragePhaseComplete = completedQuads >= baseTarget && coverageAchieved;
-    const tournamentQuads = coveragePhaseComplete ? 4 : 0; // Fixed 4 quads for tournament
-    const extendedTarget = baseTarget + tournamentQuads;
+    const inTournamentPhase = coveragePhaseComplete && completedQuads < fullTarget;
 
-    // Determine phase
-    const inTournamentPhase = coveragePhaseComplete && completedQuads < extendedTarget;
-
-    // Check completion - require EXTENDED target AND coverage
+    // Check completion - require FULL target AND coverage
     // This ensures tournament phase completes before category is done
-    if (completedQuads >= extendedTarget && coverageAchieved) {
+    if (completedQuads >= fullTarget && coverageAchieved) {
       // Category complete
       if (study.hasCategorySeparation) {
         // Check all categories
@@ -217,11 +216,9 @@ export async function GET(
           const rawCount = catComps.length;
           const quadCount = Math.floor(rawCount / 3);
           const catCoverage = hasFullCoverage(catItems as any, catComps as any);
-          // Tournament phase: FIXED 4 extra quads once coverage achieved
-          const coveragePhaseComplete = quadCount >= catBaseTarget && catCoverage;
-          const catTournamentQuads = coveragePhaseComplete ? 4 : 0;
-          const catExtendedTarget = catBaseTarget + catTournamentQuads;
-          return quadCount >= catExtendedTarget && catCoverage;
+          // Tournament phase: ALWAYS use full target (baseTarget + 4)
+          const catFullTarget = catBaseTarget + TOURNAMENT_QUADS;
+          return quadCount >= catFullTarget && catCoverage;
         });
 
         if (allComplete) {
@@ -241,7 +238,7 @@ export async function GET(
           categoryComplete: true,
           categoryId,
           comparisonsInCategory: completedQuads,
-          targetComparisons: extendedTarget,
+          targetComparisons: fullTarget,
         },
         { headers: rateLimitHeaders }
       );
@@ -286,8 +283,8 @@ export async function GET(
         categoryId,
         progress: {
           completed: completedQuads,
-          target: extendedTarget,
-          percentage: Math.min(99, Math.round((completedQuads / extendedTarget) * 100)),
+          target: fullTarget,
+          percentage: Math.min(99, Math.round((completedQuads / fullTarget) * 100)),
         },
       },
       { headers: rateLimitHeaders }

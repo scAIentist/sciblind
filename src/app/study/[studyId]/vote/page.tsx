@@ -1511,6 +1511,39 @@ function VotingPageContent() {
             <ProgressBar completed={quad.progress.completed} target={quad.progress.target} themeColor={uiConfig.themeColor} />
           </footer>
         )}
+
+        {/* Rankings Modal (for quad mode) */}
+        {showRankingsModal && rankingsModalCategoryId && (
+          <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 rounded-2xl max-w-lg w-full p-6 relative animate-fade-in">
+              <button
+                onClick={() => setShowRankingsModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                <X className="w-6 h-6" />
+              </button>
+              <h2 className="text-xl font-bold text-white mb-4 text-center">
+                {categories.find(c => c.id === rankingsModalCategoryId)?.name}
+              </h2>
+              {rankingsLoading ? (
+                <div className="py-8 text-center">
+                  <div
+                    className="w-8 h-8 border-3 border-t-transparent rounded-full animate-spin mx-auto"
+                    style={{ borderColor: uiConfig.themeColor, borderTopColor: 'transparent' }}
+                  />
+                </div>
+              ) : (
+                <RankingsComparison
+                  categoryName=""
+                  personalItems={personalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                  globalItems={globalRankings.find(r => r.categoryId === rankingsModalCategoryId)?.topItems || []}
+                  themeColor={uiConfig.themeColor}
+                  t={t}
+                />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
