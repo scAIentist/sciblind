@@ -60,6 +60,7 @@ interface DashboardData {
   globalStats: {
     totalStudies: number;
     activeStudies: number;
+    activeSessions: number;  // Sessions with activity in last 30 mins
     totalComparisons: number;
     totalSessions: number;
     completedSessions: number;
@@ -92,25 +93,33 @@ export default function AdminDashboard() {
     }
   }, []);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch('/api/admin/dashboard');
-        if (!res.ok) throw new Error('Failed to fetch dashboard data');
-        const json = await res.json();
-        setData(json);
-        // Auto-expand first study
-        if (json.studies.length > 0) {
-          setExpandedStudy(json.studies[0].id);
-        }
-      } catch (err) {
+  const fetchData = useCallback(async (isInitial = false) => {
+    try {
+      const res = await fetch('/api/admin/dashboard');
+      if (!res.ok) throw new Error('Failed to fetch dashboard data');
+      const json = await res.json();
+      setData(json);
+      // Auto-expand first study only on initial load
+      if (isInitial && json.studies.length > 0 && !expandedStudy) {
+        setExpandedStudy(json.studies[0].id);
+      }
+    } catch (err) {
+      if (isInitial) {
         setError(err instanceof Error ? err.message : 'Unknown error');
-      } finally {
+      }
+    } finally {
+      if (isInitial) {
         setLoading(false);
       }
     }
-    fetchData();
-  }, []);
+  }, [expandedStudy]);
+
+  useEffect(() => {
+    fetchData(true);
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(() => fetchData(false), 30000);
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   if (loading) {
     return (
@@ -166,7 +175,12 @@ export default function AdminDashboard() {
         {/* Global Stats */}
         <div className="grid gap-4 grid-cols-2 md:grid-cols-3 lg:grid-cols-6 mb-8">
           <StatCard title="Studies" value={stats?.totalStudies || 0} subtitle="total" />
-          <StatCard title="Active" value={stats?.activeStudies || 0} subtitle="running now" color="green" />
+          <StatCard
+            title="Active"
+            value={stats?.activeSessions || 0}
+            subtitle="voting now"
+            color={stats?.activeSessions ? 'green' : 'gray'}
+          />
           <StatCard title="Sessions" value={stats?.totalSessions || 0} subtitle="participants" />
           <StatCard title="Completed" value={stats?.completedSessions || 0} subtitle="finished" color="blue" />
           <StatCard title="Comparisons" value={stats?.totalComparisons || 0} subtitle="votes cast" />

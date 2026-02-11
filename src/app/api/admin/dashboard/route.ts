@@ -48,6 +48,12 @@ export async function GET() {
     const totalSessions = realSessions.length;
     const completedSessions = realSessions.filter((sess) => sess.isCompleted).length;
 
+    // Count "active" sessions (activity in the last 30 minutes)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    const activeSessions = realSessions.filter(
+      (sess) => !sess.isCompleted && sess.lastActiveAt && new Date(sess.lastActiveAt) > thirtyMinutesAgo
+    ).length;
+
     // Count real comparisons (not from test sessions)
     const totalComparisons = await prisma.comparison.count({
       where: {
@@ -177,6 +183,7 @@ export async function GET() {
       globalStats: {
         totalStudies,
         activeStudies,
+        activeSessions,  // Sessions with activity in last 30 mins
         totalComparisons,
         totalSessions,
         completedSessions,
