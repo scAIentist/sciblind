@@ -100,6 +100,33 @@ export async function PATCH(
       updateData.allowContinuedVoting = Boolean(body.allowContinuedVoting);
     }
 
+    // Fraud detection settings
+    if (body.minResponseTimeMs !== undefined) {
+      const value = parseInt(body.minResponseTimeMs, 10);
+      if (isNaN(value) || value < 0 || value > 60000) {
+        return NextResponse.json(
+          { error: 'Invalid minResponseTimeMs. Must be between 0 and 60000 (1 minute)' },
+          { status: 400 }
+        );
+      }
+      updateData.minResponseTimeMs = value;
+    }
+
+    if (body.maxResponseTimeMs !== undefined) {
+      const value = parseInt(body.maxResponseTimeMs, 10);
+      if (isNaN(value) || value < 10000 || value > 3600000) {
+        return NextResponse.json(
+          { error: 'Invalid maxResponseTimeMs. Must be between 10000 (10 seconds) and 3600000 (1 hour)' },
+          { status: 400 }
+        );
+      }
+      updateData.maxResponseTimeMs = value;
+    }
+
+    if (body.excludeFlaggedFromElo !== undefined) {
+      updateData.excludeFlaggedFromElo = Boolean(body.excludeFlaggedFromElo);
+    }
+
     if (Object.keys(updateData).length === 0) {
       return NextResponse.json(
         { error: 'No valid fields to update' },
@@ -120,6 +147,9 @@ export async function PATCH(
         uiVoteAnimation: true,
         uiCategoryStyle: true,
         allowContinuedVoting: true,
+        minResponseTimeMs: true,
+        maxResponseTimeMs: true,
+        excludeFlaggedFromElo: true,
       },
     });
 

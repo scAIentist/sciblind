@@ -32,6 +32,11 @@ model Study {
   adaptiveKFactor           Boolean       @default(false) // K decreases as items get more games
   allowContinuedVoting      Boolean       @default(true)  // Allow voting after threshold met
 
+  // Fraud detection settings
+  minResponseTimeMs         Int           @default(500)      // Responses faster than this are flagged as "too_fast"
+  maxResponseTimeMs         Int           @default(300000)   // Responses slower than this are flagged as "too_slow" (5 min default)
+  excludeFlaggedFromElo     Boolean       @default(false)    // If true, flagged votes don't affect ELO ratings
+
   // Category support
   hasCategorySeparation     Boolean       @default(false) // Items don't mix between categories
   categories                Category[]

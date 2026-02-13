@@ -80,6 +80,38 @@ export default function StudyDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'rankings' | 'sessions' | 'codes'>('rankings');
+  const [exporting, setExporting] = useState<'pdf' | 'json' | null>(null);
+
+  const handleExport = async (format: 'pdf' | 'json') => {
+    setExporting(format);
+    try {
+      const endpoint = format === 'pdf'
+        ? `/api/admin/studies/${studyId}/export-pdf`
+        : `/api/admin/studies/${studyId}/export`;
+
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+
+      const blob = await res.blob();
+      const filename = format === 'pdf'
+        ? `study-results-${studyId.slice(-8)}-${new Date().toISOString().split('T')[0]}.pdf`
+        : `study-export-${studyId.slice(-8)}-${new Date().toISOString().split('T')[0]}.json`;
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Export failed. Please try again.');
+    } finally {
+      setExporting(null);
+    }
+  };
 
   useEffect(() => {
     async function fetchData() {
@@ -145,13 +177,39 @@ export default function StudyDetailPage() {
                 Created {new Date(study.createdAt).toLocaleDateString()}
               </p>
             </div>
-            <Link
-              href={`/study/${study.id}`}
-              target="_blank"
-              className="px-4 py-2 border rounded-lg text-sm hover:bg-accent"
-            >
-              Open Participant View ↗
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleExport('pdf')}
+                disabled={exporting !== null}
+                className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2"
+              >
+                {exporting === 'pdf' ? (
+                  <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+                ) : (
+                  <span>📄</span>
+                )}
+                Export PDF
+              </button>
+              <button
+                onClick={() => handleExport('json')}
+                disabled={exporting !== null}
+                className="px-4 py-2 border rounded-lg text-sm hover:bg-accent disabled:opacity-50 flex items-center gap-2"
+              >
+                {exporting === 'json' ? (
+                  <span className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+                ) : (
+                  <span>📊</span>
+                )}
+                Export JSON
+              </button>
+              <Link
+                href={`/study/${study.id}`}
+                target="_blank"
+                className="px-4 py-2 border rounded-lg text-sm hover:bg-accent"
+              >
+                Open Participant View ↗
+              </Link>
+            </div>
           </div>
         </div>
 

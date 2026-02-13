@@ -24,10 +24,9 @@ import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security
 import { validateVoteRequest, isValidCuid } from '@/lib/security/validation';
 import { logActivity } from '@/lib/logging';
 
-// Minimum response time in ms (faster is flagged as suspicious)
-const MIN_RESPONSE_TIME_MS = 500;
-// Maximum response time (likely AFK or bot patterns)
-const MAX_RESPONSE_TIME_MS = 300000; // 5 minutes
+// Default thresholds (overridden by study settings)
+const DEFAULT_MIN_RESPONSE_TIME_MS = 500;
+const DEFAULT_MAX_RESPONSE_TIME_MS = 300000; // 5 minutes
 
 export async function POST(
   request: NextRequest,
@@ -104,6 +103,9 @@ export async function POST(
               hasCategorySeparation: true,
               eloKFactor: true,
               adaptiveKFactor: true,
+              minResponseTimeMs: true,
+              maxResponseTimeMs: true,
+              excludeFlaggedFromElo: true,
             },
           },
         },
@@ -175,15 +177,19 @@ export async function POST(
       );
     }
 
-    // Fraud detection
+    // Fraud detection using study's configurable thresholds
+    const minResponseTime = session.study.minResponseTimeMs ?? DEFAULT_MIN_RESPONSE_TIME_MS;
+    const maxResponseTime = session.study.maxResponseTimeMs ?? DEFAULT_MAX_RESPONSE_TIME_MS;
+    const excludeFlaggedFromElo = session.study.excludeFlaggedFromElo ?? false;
+
     let isFlagged = false;
     let flagReason: string | null = null;
 
     if (responseTimeMs !== undefined) {
-      if (responseTimeMs < MIN_RESPONSE_TIME_MS) {
+      if (responseTimeMs < minResponseTime) {
         isFlagged = true;
         flagReason = 'too_fast';
-      } else if (responseTimeMs > MAX_RESPONSE_TIME_MS) {
+      } else if (responseTimeMs > maxResponseTime) {
         isFlagged = true;
         flagReason = 'too_slow';
       }
@@ -216,8 +222,9 @@ export async function POST(
         },
       });
 
-      // ONLY update ELO and item stats for NON-test sessions
-      if (!isTestSession) {
+      // Update ELO and item stats for NON-test sessions (and non-flagged if excludeFlaggedFromElo is enabled)
+      const shouldUpdateElo = !isTestSession && !(isFlagged && excludeFlaggedFromElo);
+      if (shouldUpdateElo) {
         // Calculate effective K-factor (adaptive or fixed)
         const effectiveK = session.study.adaptiveKFactor
           ? calculateAdaptiveK(session.study.eloKFactor, winner.eloGames, loser.eloGames)
@@ -255,8 +262,30 @@ export async function POST(
             rightCount: rightItemId === loser.id ? { increment: 1 } : undefined,
           },
         });
+      } else if (!isTestSession) {
+        // Still update counts for flagged votes (when excludeFlaggedFromElo), just not ELO
+        await tx.item.update({
+          where: { id: winner.id },
+          data: {
+            comparisonCount: { increment: 1 },
+            winCount: { increment: 1 },
+            leftCount: leftItemId === winner.id ? { increment: 1 } : undefined,
+            rightCount: rightItemId === winner.id ? { increment: 1 } : undefined,
+          },
+        });
+        await tx.item.update({
+          where: { id: loser.id },
+          data: {
+            comparisonCount: { increment: 1 },
+            lossCount: { increment: 1 },
+            leftCount: leftItemId === loser.id ? { increment: 1 } : undefined,
+            rightCount: rightItemId === loser.id ? { increment: 1 } : undefined,
+          },
+        });
+      }
 
-        // Record usage metrics (only for real sessions)
+      // Record usage metrics (only for real sessions)
+      if (!isTestSession) {
         await tx.usageMetrics.create({
           data: {
             studyId,

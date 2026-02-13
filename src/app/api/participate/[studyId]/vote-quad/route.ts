@@ -19,8 +19,9 @@ import { checkRateLimit, getRateLimitHeaders, RATE_LIMITS } from '@/lib/security
 import { isValidCuid, isValidSessionToken } from '@/lib/security/validation';
 import { logActivity } from '@/lib/logging';
 
-const MIN_RESPONSE_TIME_MS = 500;
-const MAX_RESPONSE_TIME_MS = 300000;
+// Default thresholds (overridden by study settings)
+const DEFAULT_MIN_RESPONSE_TIME_MS = 500;
+const DEFAULT_MAX_RESPONSE_TIME_MS = 300000;
 
 interface VoteQuadBody {
   sessionToken: string;
@@ -108,6 +109,9 @@ export async function POST(
               eloKFactor: true,
               adaptiveKFactor: true,
               hasCategorySeparation: true,
+              minResponseTimeMs: true,
+              maxResponseTimeMs: true,
+              excludeFlaggedFromElo: true,
             },
           },
         },
@@ -144,15 +148,19 @@ export async function POST(
     const winner = items.find((i) => i!.id === winnerId)!;
     const losers = items.filter((i) => i!.id !== winnerId) as NonNullable<typeof items[0]>[];
 
-    // Fraud detection
+    // Fraud detection using study's configurable thresholds
+    const minResponseTime = session.study.minResponseTimeMs ?? DEFAULT_MIN_RESPONSE_TIME_MS;
+    const maxResponseTime = session.study.maxResponseTimeMs ?? DEFAULT_MAX_RESPONSE_TIME_MS;
+    const excludeFlaggedFromElo = session.study.excludeFlaggedFromElo ?? false;
+
     let isFlagged = false;
     let flagReason: string | null = null;
 
     if (responseTimeMs !== undefined) {
-      if (responseTimeMs < MIN_RESPONSE_TIME_MS) {
+      if (responseTimeMs < minResponseTime) {
         isFlagged = true;
         flagReason = 'too_fast';
-      } else if (responseTimeMs > MAX_RESPONSE_TIME_MS) {
+      } else if (responseTimeMs > maxResponseTime) {
         isFlagged = true;
         flagReason = 'too_slow';
       }
@@ -191,8 +199,9 @@ export async function POST(
         });
         comparisons.push(comparison);
 
-        // Update ELO for non-test sessions
-        if (!isTestSession) {
+        // Update ELO for non-test sessions (and non-flagged if excludeFlaggedFromElo is enabled)
+        const shouldUpdateElo = !isTestSession && !(isFlagged && excludeFlaggedFromElo);
+        if (shouldUpdateElo) {
           const effectiveK = session.study.adaptiveKFactor
             ? calculateAdaptiveK(session.study.eloKFactor, winner.eloGames, loser.eloGames)
             : session.study.eloKFactor;
@@ -224,8 +233,26 @@ export async function POST(
               lossCount: { increment: 1 },
             },
           });
+        } else if (!isTestSession) {
+          // Still update counts for flagged votes (when excludeFlaggedFromElo), just not ELO
+          await tx.item.update({
+            where: { id: winner.id },
+            data: {
+              comparisonCount: { increment: 1 },
+              winCount: { increment: 1 },
+            },
+          });
+          await tx.item.update({
+            where: { id: loser.id },
+            data: {
+              comparisonCount: { increment: 1 },
+              lossCount: { increment: 1 },
+            },
+          });
+        }
 
-          // Record usage metric
+        // Record usage metric (always, except for test sessions)
+        if (!isTestSession) {
           await tx.usageMetrics.create({
             data: {
               studyId,

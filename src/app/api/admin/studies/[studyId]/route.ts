@@ -36,7 +36,14 @@ export async function GET(
         },
         sessions: {
           orderBy: { createdAt: 'desc' },
-          include: {
+          select: {
+            id: true,
+            createdAt: true,
+            isCompleted: true,
+            isFlagged: true,
+            flagReason: true,
+            avgResponseTimeMs: true,
+            isTestSession: true,
             _count: {
               select: { comparisons: true },
             },
@@ -95,9 +102,15 @@ export async function GET(
       })
     );
 
-    // Get comparison history
+    // Get comparison history (excluding test sessions)
     const recentComparisons = await prisma.comparison.findMany({
-      where: { studyId },
+      where: {
+        studyId,
+        OR: [
+          { flagReason: null },
+          { flagReason: { not: 'test_session' } },
+        ],
+      },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: {
@@ -112,19 +125,49 @@ export async function GET(
       },
     });
 
-    // Calculate statistics
-    const totalComparisons = await prisma.comparison.count({ where: { studyId } });
+    // Calculate statistics (excluding test sessions)
+    const totalComparisons = await prisma.comparison.count({
+      where: {
+        studyId,
+        OR: [
+          { flagReason: null },
+          { flagReason: { not: 'test_session' } },
+        ],
+      },
+    });
     const flaggedCount = await prisma.comparison.count({
-      where: { studyId, isFlagged: true },
+      where: {
+        studyId,
+        isFlagged: true,
+        NOT: { flagReason: 'test_session' },
+      },
     });
 
     const avgResponseTime = await prisma.comparison.aggregate({
       where: {
         studyId,
         responseTimeMs: { not: null },
+        OR: [
+          { flagReason: null },
+          { flagReason: { not: 'test_session' } },
+        ],
       },
       _avg: { responseTimeMs: true },
     });
+
+    // Get flag reason breakdown (excluding test_session)
+    const flagBreakdown = await prisma.comparison.groupBy({
+      by: ['flagReason'],
+      where: {
+        studyId,
+        isFlagged: true,
+        NOT: { flagReason: 'test_session' },
+      },
+      _count: true,
+    });
+
+    // Filter out test sessions from the sessions list
+    const realSessions = study.sessions.filter((s) => !s.isTestSession);
 
     return NextResponse.json({
       study: {
@@ -138,7 +181,7 @@ export async function GET(
         hasCategorySeparation: study.hasCategorySeparation,
       },
       accessCodes: study.accessCodes,
-      sessions: study.sessions.map((s) => ({
+      sessions: realSessions.map((s) => ({
         id: s.id,
         createdAt: s.createdAt,
         isCompleted: s.isCompleted,
@@ -154,6 +197,10 @@ export async function GET(
         flaggedPercentage:
           totalComparisons > 0 ? Math.round((flaggedCount / totalComparisons) * 100) : 0,
         avgResponseTimeMs: Math.round(avgResponseTime._avg.responseTimeMs || 0),
+        flagBreakdown: flagBreakdown.map((f) => ({
+          reason: f.flagReason,
+          count: f._count,
+        })),
       },
       recentComparisons,
     });
