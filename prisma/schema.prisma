@@ -57,6 +57,9 @@ model Study {
   // Methodology for PDF export
   methodologyText           String?       @db.Text
 
+  // PDF Report Configuration (stored as JSON)
+  pdfReportConfig           Json?         // ReportConfig object
+
   // Comparison mode: affects how many items are shown at once
   comparisonMode            String        @default("pair")       // "pair" (2 items) | "quad" (4 items, pick best 1)
 
