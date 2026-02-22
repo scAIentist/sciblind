@@ -4,16 +4,40 @@
  * GET /api/admin/dashboard
  *
  * Returns comprehensive statistics for the admin dashboard.
- * TODO: Add authentication check when Keycloak is integrated
+ * Filters studies based on user role:
+ * - SUPER_ADMIN: sees all studies
+ * - USER: sees only their own studies
  */
 
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { getAuthenticatedUser } from '@/lib/security/user-auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    // Get all studies with related data
+    // Check authentication
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return NextResponse.json(
+        { error: 'Unauthorized. Authentication required.', errorKey: 'AUTH_REQUIRED' },
+        { status: 401 }
+      );
+    }
+
+    // Build study filter based on user role
+    const studyFilter = user.role === 'SUPER_ADMIN'
+      ? {} // Super admins see all studies
+      : {
+          OR: [
+            { ownerId: user.id },
+            // Legacy studies are visible to their owner
+            { AND: [{ isLegacy: true }, { ownerId: user.id }] },
+          ],
+        };
+
+    // Get studies with related data based on user's access
     const studies = await prisma.study.findMany({
+      where: studyFilter,
       include: {
         categories: {
           include: {
@@ -26,6 +50,13 @@ export async function GET() {
           },
         },
         accessCodes: true,
+        owner: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+          },
+        },
         _count: {
           select: {
             comparisons: true,
@@ -54,9 +85,11 @@ export async function GET() {
       (sess) => !sess.isCompleted && sess.lastActiveAt && new Date(sess.lastActiveAt) > thirtyMinutesAgo
     ).length;
 
-    // Count real comparisons (not from test sessions)
+    // Count real comparisons from accessible studies only
+    const studyIds = studies.map((s) => s.id);
     const totalComparisons = await prisma.comparison.count({
       where: {
+        studyId: { in: studyIds },
         OR: [
           { isFlagged: false },
           { flagReason: { not: 'test_session' } },
@@ -67,6 +100,7 @@ export async function GET() {
     // Calculate flagged comparisons (excluding test_session flags)
     const flaggedComparisons = await prisma.comparison.count({
       where: {
+        studyId: { in: studyIds },
         isFlagged: true,
         flagReason: { not: 'test_session' },
       },
@@ -165,8 +199,10 @@ export async function GET() {
           id: study.id,
           title: study.title,
           isActive: study.isActive,
+          isLegacy: study.isLegacy,
           createdAt: study.createdAt,
           language: study.language,
+          owner: study.owner,
           totalItems: study._count.items,
           totalComparisons: study._count.comparisons,
           totalSessions: study._count.sessions,
@@ -180,6 +216,12 @@ export async function GET() {
     );
 
     return NextResponse.json({
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
       globalStats: {
         totalStudies,
         activeStudies,

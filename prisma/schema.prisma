@@ -75,15 +75,24 @@ model Study {
   isActive                  Boolean       @default(true)
   publishedAt               DateTime?
 
+  // Legacy study flag - only visible to superadmins and designated owner
+  isLegacy                  Boolean       @default(false)
+
   // Relations
   items                     Item[]
   sessions                  Session[]
   comparisons               Comparison[]
 
-  // Admin ownership
-  createdBy                 String        // Keycloak user ID or "seed-script"
+  // Admin ownership (new multi-user system)
+  ownerId                   String?
+  owner                     User?         @relation("StudyOwner", fields: [ownerId], references: [id])
+
+  // Legacy field - kept for audit trail
+  createdBy                 String        // Original creator (email, user ID, or "seed-script")
 
   @@index([createdBy])
+  @@index([ownerId])
+  @@index([isLegacy])
 }
 
 model Category {
@@ -297,6 +306,63 @@ enum UsageEventType {
   COMPARISON
   IMAGE_UPLOAD
   TEXT_ITEM
+}
+
+// ========== User Management ==========
+
+model User {
+  id            String    @id @default(cuid())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  email         String    @unique
+  passwordHash  String    // bcrypt hash
+
+  // Profile
+  name          String?
+
+  // Role-based access
+  role          UserRole  @default(USER)
+
+  // Account state
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
+
+  // Password reset
+  resetToken      String?   @unique
+  resetTokenExpiry DateTime?
+
+  // Relations
+  studies       Study[]   @relation("StudyOwner")
+  adminSessions AdminSession[]
+
+  @@index([email])
+  @@index([role])
+  @@index([resetToken])
+}
+
+model AdminSession {
+  id          String    @id @default(cuid())
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime
+
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  token       String    @unique  // Secure random token
+
+  // Metadata
+  userAgent   String?
+  ipHash      String?
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+enum UserRole {
+  USER        // Regular user - sees only own studies
+  SUPER_ADMIN // Super admin - sees all studies, can manage users
 }
 
 // ========== Activity Logging ==========
